@@ -1,7 +1,6 @@
-use crate::{Hash, Index, Seed, AuditorUpdate, AuditorProof};
+use crate::{Hash, Index, Seed, AuditorUpdate, Proof, try_into_hash};
+use crate::transparency::auditor_proof::{DifferentKey, SameKey};
 use sha2::{Digest, Sha256};
-use generic_array::GenericArray;
-
 
 // Prefix tree is a K-V merkle tree. However, instead of
 // dynamically increasing the size of the tree and giving variable-length
@@ -13,9 +12,66 @@ pub(crate) struct PrefixTreeCache {
 }
 
 
+pub(crate) enum PrefixTreeUpdate {
+    NewTree {
+        index: Index,
+        seed: Seed,
+    },
+    DifferentKey {
+        real: bool,
+        index: Index,
+        seed: Seed,
+        old_seed: Seed,
+        copath: Vec<Hash>,
+    },
+    SameKey {
+        index: Index,
+        copath: Vec<Hash>,
+        seed: Seed,
+        counter: u32,
+        position: u64,
+    },
+}
+
+impl TryFrom<AuditorUpdate> for PrefixTreeUpdate {
+    type Error = String;
+    fn try_from(update: AuditorUpdate) -> Result<Self, Self::Error> {
+        let proof = update.proof.and_then(|x| x.proof).ok_or("Missing proof")?;
+        match proof {
+            Proof::NewTree(_) => {
+                if !update.real {
+                    return Err("Fake update".to_string());
+                }
+                Ok(PrefixTreeUpdate::NewTree {
+                index: update.index.try_into().map_err(|_| "Invalid index")?,
+                seed: update.seed.try_into().map_err(|_| "Invalid seed")?,
+            })},
+            Proof::DifferentKey( DifferentKey { copath, old_seed }) => Ok(PrefixTreeUpdate::DifferentKey {
+                real: update.real,
+                index: update.index.try_into().map_err(|_| "Invalid index")?,
+                seed: update.seed.try_into().map_err(|_| "Invalid seed")?,
+                old_seed: old_seed.try_into().map_err(|_| "Invalid old seed")?,
+                copath: copath.into_iter().map(try_into_hash).collect::<Result<Vec<_>, _>>()?,
+            }),
+            Proof::SameKey (SameKey { copath, counter, position }) => {
+                if !update.real {
+                    return Err("Fake update".to_string());
+                }
+                
+                Ok(PrefixTreeUpdate::SameKey {
+                index: update.index.try_into().map_err(|_| "Invalid index")?,
+                copath: copath.into_iter().map(try_into_hash).collect::<Result<Vec<_>, _>>()?,
+                seed: update.seed.try_into().map_err(|_| "Invalid seed")?,
+                counter,
+                position,
+            })}
+        }
+    }
+}
+
 impl PrefixTreeCache {
     pub fn new(index: Index, seed: Seed) -> Self {
-        let proof = PrefixProof::insert(
+        let proof = PrefixProof::real(
             &PrefixLeaf {
                 index,
                 counter: 0,
@@ -31,32 +87,31 @@ impl PrefixTreeCache {
 
     pub fn apply_update(
         &self,
-        update: &AuditorUpdate,
+        update: PrefixTreeUpdate,
     ) -> Result<Self, String> {
-        let head = match &update.proof {
-            AuditorProof::NewTree => {
-                return Err("New tree".to_string());
+        let proof = match update {
+            PrefixTreeUpdate::NewTree { index, seed } => {
+                PrefixProof::real(
+                    &PrefixLeaf {
+                        index,
+                        counter: 0,
+                        position: self.position + 1,
+                    },  
+                    &[],
+                    &seed)
+                
             }
-            AuditorProof::SameKey {
-                copath,
-                counter,
-                position,
-            } => {
-                let counter = *counter;
-                let position = *position;
-    
-                if !update.real {
-                    return Err("Fake update".to_string());
-                }
+            PrefixTreeUpdate::SameKey { index, copath, seed, counter, position } => {    
     
                 // Check that lookup at counter, position is the same as the old root.
-                let proof = PrefixProof::update(
+                let proof = PrefixProof::real(
                     &PrefixLeaf {
-                        index: update.index,
+                        index,
                         counter,
                         position,
                     },
-                    copath,
+                    &copath,
+                    &seed,
                 )?;
     
                 let old_root = proof.compute_root();
@@ -66,20 +121,19 @@ impl PrefixTreeCache {
                 }
     
                 // Update the cache
-                let proof = PrefixProof::update(
+                PrefixProof::real(
                     &PrefixLeaf {
-                        index: update.index,
+                        index,
                         counter: counter + 1,
                         position,
                     },
-                    copath,
-                )?;
-    
-                proof.compute_root()
+                    &copath,
+                    &seed,
+                )
             }
     
-            AuditorProof::DifferentKey { copath, old_seed } => {
-                let proof = PrefixProof::fake(&update.index, copath, old_seed)?;
+            PrefixTreeUpdate::DifferentKey { real, index, seed, old_seed, copath } => {
+                let proof = PrefixProof::fake(&index, &copath, &old_seed)?;
     
                 let old_head = proof.compute_root();
     
@@ -87,23 +141,23 @@ impl PrefixTreeCache {
                     return Err("Old root mismatch".to_string());
                 }
     
-                let proof = if update.real {
-                    PrefixProof::insert(
+                if real {
+                    PrefixProof::real(
                         &PrefixLeaf {
-                            index: update.index,
+                            index,
                             counter: 0,
                             position: self.position + 1,
                         },
-                        copath,
-                        &update.seed,
-                    )?
+                        &copath,
+                        &seed,
+                    )
                 } else {
-                    PrefixProof::fake(&update.index, copath, &update.seed)?
-                };
-    
-                proof.compute_root()
+                    PrefixProof::fake(&index, &copath, &seed)
+                }
             }
         };
+
+        let head = proof?.compute_root();
     
         Ok(Self {
             head,
@@ -140,11 +194,6 @@ fn stand_in_hash(seed: &Seed, level: u8) -> Hash {
 }
 
 fn parent_hash(left: &Hash, right: &Hash) -> Hash {
-    #[cfg(test)]
-    {
-        use hex::ToHex;
-        println!("parentHash: left: {:?}, right: {:?}", left.encode_hex::<String>(), right.encode_hex::<String>());
-    }
     let mut hasher = Sha256::new();
     hasher.update([0x01]);
     hasher.update(left);
@@ -173,12 +222,9 @@ impl PrefixProof {
         })
     }
 
+    /* 
     // A proof for a version increment operation.
     fn update(leaf: &PrefixLeaf, copath: &[Hash]) -> Result<Self, String> {
-        if copath.len() != 256 {
-            return Err("Copath must be 256 long".to_string());
-        }
-
         let value = leaf_hash(leaf);
         Ok(Self {
             value,
@@ -186,27 +232,26 @@ impl PrefixProof {
             copath: copath.to_owned(),
         })
     }
+    */
 
     // A proof for a new leaf insertion.
-    fn insert(leaf: &PrefixLeaf, copath: &[Hash], seed: &Seed) -> Result<Self, String> {
+    fn real(leaf: &PrefixLeaf, copath: &[Hash], seed: &Seed) -> Result<Self, String> {
         if copath.len() > 256 {
             return Err("Copath too long".to_string());
         }
 
+        // TODO - use iterators to avoid copying
+        let mut copath = copath.to_vec();
         // Fill in missing copath nodes using the seed.
-        let mut fullpath = Vec::with_capacity(256);
-        for i in (copath.len()..256).rev() {
-            fullpath.push(stand_in_hash(seed, i as u8));
+        for i in copath.len()..256 {
+            copath.push(stand_in_hash(seed, i as u8));
         }
-
-        fullpath.extend_from_slice(copath);
-
 
         let value = leaf_hash(leaf);
         Ok(Self {
             value,
             index: leaf.index,
-            copath: fullpath,
+            copath,
         })
     }
 
@@ -214,10 +259,8 @@ impl PrefixProof {
     fn compute_root(&self) -> Hash {
         let mut node = self.value;
         let index = self.index;
-        let n = self.copath.len();
-        for i in 0..n {
-            let n = self.copath.len() - i - 1;
-            if index[n / 8] >> (7 - (n % 8)) & 1 == 0 {
+        for i in (0..self.copath.len()).rev() {
+            if index[i / 8] >> (7 - (i % 8)) & 1 == 0 {
                 node = parent_hash(&node, &self.copath[i]);
             } else {
                 node = parent_hash(&self.copath[i], &node);
@@ -239,6 +282,10 @@ mod tests {
 
     use aes::cipher::{BlockEncrypt, KeyInit};
     use aes::Aes128;
+    use generic_array::GenericArray;
+
+    use crate::transparency::{AuditorUpdate, AuditorProof};
+    use crate::transparency::auditor_proof::{DifferentKey, SameKey, Proof};
 
     fn seed(position: u64) -> Seed {
         // Encrypt "position" with zero AES seed
@@ -264,11 +311,11 @@ mod tests {
 
     #[test]
     fn test_update() {
-        let mut index = Index::default();
+        let mut index = Index::default().to_vec();
         index[0] = 0x80;
         let old_seed = seed(0);
-        let seed = seed(1);
-        let commitment = Hash::default();
+        let seed = seed(1).to_vec();
+        let commitment = Hash::default().to_vec();
         let old_root = hex!("6eefbfcdf7b929b73963cb21eb882a2a3e49e8958fe25795df82d099e551915c").into();
         let expected_root = hex!("55a94bcb3a3958a83fab0053bdb553b4774b19a6516ac7fe0811a498396c2d36").into();
 
@@ -282,45 +329,46 @@ mod tests {
             index,
             seed,
             commitment,
-            proof: AuditorProof::DifferentKey {
+            proof: Some(AuditorProof{proof: Some(Proof::DifferentKey (DifferentKey{
                 copath,
-                old_seed,
-            },
-        };
+                old_seed: old_seed.to_vec(),
+            }))})
+        }.try_into().unwrap();
 
 
         let cache = PrefixTreeCache { head: old_root, position: 0 }
-            .apply_update(&update).unwrap();
+            .apply_update(update).unwrap();
         assert_eq!(cache.head, expected_root, "Expected root: {:?}, got: {:?}", expected_root.encode_hex::<String>(), cache.head.encode_hex::<String>());
         assert_eq!(cache.position, 1);
     }
 
     #[test]
     fn test_fake_update() {
-        let mut index = Index::default();
+        let mut index : Vec<u8> = Index::default().into();
         index[0] = 0xc0;
-        let commitment = Hash::default();
+        let commitment = Hash::default().to_vec();
         let old_root = hex!("55a94bcb3a3958a83fab0053bdb553b4774b19a6516ac7fe0811a498396c2d36").into();
         let expected_root = hex!("82c7616b35828d31468590ecec7e3b62a31c7ec7a6874229da90a9cebf28a1df").into();
 
         let copath = vec![
-            hex!("a7d0256b66a95ad4a8f9efed2ee9f060cc50c32336223063c30483dda33f0408").into(),
             hex!("33819dcecb822883dd9e134325f28ba79d114fe69bb33a09d9755c6507fe22e7").into(),
+            hex!("a7d0256b66a95ad4a8f9efed2ee9f060cc50c32336223063c30483dda33f0408").into(),
         ];
 
         let update = AuditorUpdate {
             real: false,
             index,
-            seed: seed(2),
+            seed: seed(2).into(),
             commitment,
-            proof: AuditorProof::DifferentKey {
+            proof: Some(AuditorProof{proof: Some(Proof::DifferentKey (DifferentKey{
                 copath,
-                old_seed: seed(1),
-            },
-        };
+                old_seed: seed(1).into(),
+            }))})
+        }.try_into().unwrap();
 
         let cache = PrefixTreeCache { head: old_root, position: 1 }
-            .apply_update(&update).unwrap();
+            .apply_update(update).unwrap();
+
         assert_eq!(cache.head, expected_root, "Expected root: {:?}, got: {:?}", expected_root.encode_hex::<String>(), cache.head.encode_hex::<String>());
         assert_eq!(cache.position, 2);
     }

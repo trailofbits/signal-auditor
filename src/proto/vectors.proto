@@ -8,6 +8,8 @@ syntax = "proto3";
 option go_package = "github.com/signalapp/keytransparency/cmd/generate-auditing-test-vectors/pb";
 import "transparency.proto";
 
+package test_vectors;
+
 message TestVectors {
     message ShouldFailTestVector {
         string description = 1;

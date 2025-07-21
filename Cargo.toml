@@ -5,7 +5,8 @@ edition = "2024"
 
 [dependencies]
 crypto-common = "0.1.6"
-generic-array = "0.14.4"
+ed25519-dalek = { version = "2.2.0", features = ["asm", "pkcs8"] }
+generic-array = {version = "0.14.7", features = ["more_lengths"]}
 prost = "0.14.1"
 sha2 = { version = "0.10.9", features = ["asm", "asm-aarch64", "sha2-asm"] }
 
@@ -16,3 +17,10 @@ prost-build = "0.14.1"
 aes = "0.8.4"
 hex = "0.4.3"
 hex-literal = "1.0.0"
+lazy_static = "1.5.0"
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "audit"
+harness = false

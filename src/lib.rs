@@ -1,7 +1,9 @@
 pub mod prefix;
 pub mod log;
+pub mod auditor;
 
 use sha2::{Sha256, Digest};
+use std::mem;
 
 use crypto_common::OutputSizeUser;
 use generic_array::GenericArray;
@@ -14,7 +16,21 @@ type Hash = GenericArray<u8, <Sha256 as OutputSizeUser>::OutputSize>;
 type Index = [u8; 32];
 type Seed = [u8; 16];
 
-enum TransparencyLog {
+pub mod transparency {
+    include!(concat!(env!("OUT_DIR"), "/transparency.rs"));
+}
+
+pub mod test_vectors {
+    include!(concat!(env!("OUT_DIR"), "/test_vectors.rs"));
+}
+
+use transparency::AuditorUpdate;
+use transparency::auditor_proof::Proof;
+
+
+use crate::prefix::PrefixTreeUpdate;
+
+pub enum TransparencyLog {
     Initialized {
         log_cache: LogTreeCache,
         prefix_cache: PrefixTreeCache,
@@ -23,30 +39,42 @@ enum TransparencyLog {
     Uninitialized,
 }
 
+impl Default for TransparencyLog {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransparencyLog {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::Uninitialized
     }
 
-    fn is_initialized(&self) -> bool {
+    pub fn is_initialized(&self) -> bool {
         matches!(self, Self::Initialized { .. })
     }
 
-    fn apply_update(&mut self, update: &AuditorUpdate) -> Result<(), String> {
+    pub fn apply_update(&mut self, mut update: AuditorUpdate) -> Result<(), String> {
+        // Take the commitment out of the update, this is not used by the prefix tree.
+        let commitment = try_into_hash(mem::take(&mut update.commitment))?;
+
+        // Consumes the update to avoid copying copaths
+        let update = PrefixTreeUpdate::try_from(update)?;
+
         if let Self::Initialized { log_cache, prefix_cache, size } = self {
-            if let AuditorProof::NewTree = &update.proof {
+            if let PrefixTreeUpdate::NewTree { .. } = update {
                 return Err("Already initialized".to_string());
             }
 
             *prefix_cache = prefix_cache.apply_update(update)?;
-            let leaf = log_leaf(prefix_cache.root(), update.commitment);
+            let leaf = log_leaf(prefix_cache.root(), commitment);
             log_cache.insert(&leaf);
             *size += 1;
             Ok(())
-        } else if let AuditorProof::NewTree = &update.proof {
-                let prefix_cache = PrefixTreeCache::new(update.index, update.seed);
+        } else if let PrefixTreeUpdate::NewTree { index, seed } = update {
+                let prefix_cache = PrefixTreeCache::new(index, seed);
                 let mut log_cache = LogTreeCache::new();
-                let leaf = log_leaf(prefix_cache.root(), update.commitment);
+                let leaf = log_leaf(prefix_cache.root(), commitment);
                 log_cache.insert(&leaf);
                 *self = Self::Initialized {
                     log_cache,
@@ -59,7 +87,7 @@ impl TransparencyLog {
             }
     }
 
-    fn log_root(&self) -> Result<Hash, String> {
+    pub fn log_root(&self) -> Result<Hash, String> {
         if let Self::Initialized { log_cache, .. } = self {
             Ok(log_cache.root())
         } else {
@@ -67,7 +95,7 @@ impl TransparencyLog {
         }
     }
 
-    fn size(&self) -> u64 {
+    pub fn size(&self) -> u64 {
         match self {
             Self::Initialized { size, .. } => *size,
             Self::Uninitialized => 0,
@@ -83,42 +111,27 @@ fn log_leaf(prefix_root: Hash, commitment: Hash) -> Hash {
     hasher.finalize()
 }
 
-enum AuditorProof {
-    NewTree,
-    DifferentKey {
-        copath: Vec<Hash>,
-        old_seed: Seed,
-    },
-    SameKey {
-        copath: Vec<Hash>,
-        counter: u32,
-        position: u64,
-    },
+fn try_into_hash(x: Vec<u8>) -> Result<Hash, String> {
+    let arr: [u8; 32] = x.try_into().map_err(|_| "Invalid hash")?;
+   Ok(arr.into())
 }
-
-struct AuditorUpdate {
-    real: bool,
-    index: Index,
-    seed: Seed,
-    commitment: Hash,
-    proof: AuditorProof,
-}
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
+    use transparency::AuditorProof;
+    use transparency::auditor_proof::NewTree;
 
     //real=true, index=72304a54df58d7d2673f7f99fe1689ca939eebc55741f3d1335904cb9c8564e4, seed=c3009d216ad487428a6f904ede447bc9, commitment=5f799a1d6d34dffacbec4d47c4f200a6be09de9b6d444ad27e87ba0beaad3607, proof=newTree{}
     // logRoot = 1e6fdd7508a05b5ba2661f7eec7e8df0a0ee9a277ca5b345f17fbe8e6aa8e9d1
     #[test]
     fn test_initialize() {
         let mut log = TransparencyLog::new();
-        let index = hex!("72304a54df58d7d2673f7f99fe1689ca939eebc55741f3d1335904cb9c8564e4");
-        let seed = hex!("c3009d216ad487428a6f904ede447bc9");
+        let index = hex!("72304a54df58d7d2673f7f99fe1689ca939eebc55741f3d1335904cb9c8564e4").to_vec();
+        let seed = hex!("c3009d216ad487428a6f904ede447bc9").to_vec();
         let commitment = hex!("5f799a1d6d34dffacbec4d47c4f200a6be09de9b6d444ad27e87ba0beaad3607").into();
-        let proof = AuditorProof::NewTree;
+        let proof = Some(AuditorProof{proof: Some(Proof::NewTree(NewTree{}))});
 
         let expected_log_root = hex!("1e6fdd7508a05b5ba2661f7eec7e8df0a0ee9a277ca5b345f17fbe8e6aa8e9d1").into();
 
@@ -130,11 +143,9 @@ mod tests {
             proof,
         };
 
-        log.apply_update(&update).unwrap();
+        log.apply_update(update).unwrap();
 
         assert!(log.is_initialized());
         assert_eq!(log.log_root().unwrap(), expected_log_root);
     }
-
-
 }
