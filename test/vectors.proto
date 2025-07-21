@@ -1,0 +1,46 @@
+//
+// Copyright 2025 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+syntax = "proto3";
+
+option go_package = "github.com/signalapp/keytransparency/cmd/generate-auditing-test-vectors/pb";
+import "transparency.proto";
+
+message TestVectors {
+    message ShouldFailTestVector {
+        string description = 1;
+        repeated transparency.AuditorUpdate updates = 2;
+    }
+
+    message ShouldSucceedTestVector {
+        message UpdateAndHash {
+            transparency.AuditorUpdate update = 1;
+            bytes log_root = 2;
+        }
+        repeated UpdateAndHash updates = 1;
+    }
+
+    message SignatureTestVector {
+        bytes auditor_priv_key = 8;
+
+        uint32 deployment_mode = 1;
+        bytes sig_pub_key = 2;
+        bytes auditor_pub_key = 9;
+        bytes vrf_pub_key = 3;
+
+        uint64 tree_size = 4;
+        int64 timestamp = 5;
+        bytes root = 6;
+
+        bytes signature = 7;
+        bytes signature_input = 10;
+
+      // next = 11
+    }
+
+    repeated ShouldFailTestVector should_fail = 1;
+    ShouldSucceedTestVector should_succeed = 2;
+    SignatureTestVector signature = 3;
+}
