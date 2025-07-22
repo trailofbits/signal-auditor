@@ -1,5 +1,8 @@
 use std::io::Result;
 fn main() -> Result<()> {
-    prost_build::compile_protos(&["src/proto/transparency.proto", "src/proto/vectors.proto"], &["src/proto"])?;
+    prost_build::compile_protos(
+        &["proto/transparency.proto", "proto/vectors.proto"],
+        &["proto/"],
+    )?;
     Ok(())
 }

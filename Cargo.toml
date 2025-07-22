@@ -1,5 +1,5 @@
 [package]
-name = "signal-kt-auditor"
+name = "signal-auditor"
 version = "0.1.0"
 edition = "2024"
 

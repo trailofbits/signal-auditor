@@ -1,20 +1,20 @@
 use ed25519_dalek::pkcs8::DecodePrivateKey;
 use lazy_static::lazy_static;
 
-use signal_kt_auditor::transparency;
+use signal_auditor::auditor::{Auditor, PublicConfig};
 
-use signal_kt_auditor::auditor::{Auditor, PublicConfig};
+use ed25519_dalek::{SigningKey, VerifyingKey, pkcs8::DecodePublicKey};
 
-use ed25519_dalek::{VerifyingKey, SigningKey, pkcs8::DecodePublicKey};
+use signal_auditor::proto as transparency;
 
 mod test_vectors {
-    include!(concat!(env!("OUT_DIR"), "/test_vectors.rs")); 
+    include!(concat!(env!("OUT_DIR"), "/test_vectors.rs"));
 }
 
-use test_vectors::TestVectors;
-use prost::Message;
-use signal_kt_auditor::TransparencyLog;
 use generic_array::GenericArray;
+use prost::Message;
+use signal_auditor::transparency::TransparencyLog;
+use test_vectors::TestVectors;
 
 lazy_static! {
     static ref VECTORS: TestVectors = {
@@ -43,16 +43,15 @@ fn test_should_fail() {
     let mut log = TransparencyLog::new();
     let should_fail = VECTORS.should_fail.clone();
     for vector in should_fail {
-       let description = vector.description;
-       let mut result = Ok(());
-       for update in vector.updates.into_iter() {
-        
-        println!("Applying update: {:x?}", update);
+        let description = vector.description;
+        let mut result = Ok(());
+        for update in vector.updates.into_iter() {
+            println!("Applying update: {:x?}", update);
 
-        result = log.apply_update(update);
-       }
+            result = log.apply_update(update);
+        }
 
-       // TODO - assert particular errors
+        // TODO - assert particular errors
         assert!(result.is_err(), "Expected error {}", description);
     }
 }
@@ -63,7 +62,7 @@ fn test_signatures() {
     let config = PublicConfig {
         mode: (vector.deployment_mode as u8).try_into().unwrap(),
         sig_key: VerifyingKey::from_public_key_der(vector.sig_pub_key.as_slice()).unwrap(),
-        vrf_key: VerifyingKey::from_public_key_der(vector.vrf_pub_key.as_slice()).unwrap(),        
+        vrf_key: VerifyingKey::from_public_key_der(vector.vrf_pub_key.as_slice()).unwrap(),
     };
 
     let key = SigningKey::from_pkcs8_der(vector.auditor_priv_key.as_slice()).unwrap();
@@ -71,6 +70,6 @@ fn test_signatures() {
     let auditor = Auditor::new(config, key);
 
     let head = GenericArray::clone_from_slice(&vector.root);
-    let sig = auditor.sign_at_time(head, vector.tree_size,vector.timestamp as u64).unwrap();
+    let sig = auditor.sign_at_time(head, vector.tree_size, vector.timestamp as u64);
     assert_eq!(sig, vector.signature);
 }
