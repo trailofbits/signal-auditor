@@ -6,8 +6,6 @@
 syntax = "proto3";
 package transparency;
 
-option go_package = "github.com/signalapp/keytransparency/tree/transparency/pb";
-
 message PrefixProof {
     repeated bytes proof = 1;
     uint32 counter = 2;

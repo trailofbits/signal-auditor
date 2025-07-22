@@ -1,0 +1,33 @@
+//
+// Copyright 2025 Signal Messenger, LLC
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+
+syntax = "proto3";
+package kt;
+
+import "google/protobuf/empty.proto";
+import "transparency.proto";
+
+// AuditRequest comes from a third-party auditor that wishes to sync with the
+// latest state of the log.
+message AuditRequest {
+  uint64 start = 1;
+  uint64 limit = 2;
+}
+
+// AuditResponse contains the list of new changes to the log.
+message AuditResponse {
+  repeated transparency.AuditorUpdate updates = 1;
+  bool more = 2;
+}
+
+// A key transparency service used to update the transparency log and to accept auditor-signed tree heads.
+// With the exception of the third-party auditor, this service's endpoints are *not* intended to be used by external clients.
+// It is exposed to the public internet by necessity but will reject calls from unauthenticated callers.
+service KeyTransparencyService {
+  // Auditors use this endpoint to request a batch of key transparency service updates to audit.
+  rpc Audit(AuditRequest) returns (AuditResponse) {}
+  // Auditors use this endpoint to return a signature on the log tree root hash corresponding to the last audited update.
+  rpc SetAuditorHead(transparency.AuditorTreeHead) returns (google.protobuf.Empty) {}
+}
