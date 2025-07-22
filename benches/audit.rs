@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use ed25519_dalek::SigningKey;
-use rand::{Rng, rngs::OsRng};
+use rand::{rngs::OsRng, Rng, TryRngCore};
 use signal_auditor::{
     auditor::{Auditor, DeploymentMode, PublicConfig},
     transparency::TransparencyLog,
@@ -56,7 +56,7 @@ fn benchmark_head_signing(c: &mut Criterion) {
 
     // Create an auditor with random keys for signing
     let mut key_bytes = [0u8; 32];
-    OsRng.fill(&mut key_bytes);
+    OsRng.try_fill_bytes(&mut key_bytes).unwrap();
     let signing_key = SigningKey::from_bytes(&key_bytes);
     let verifying_key = signing_key.verifying_key();
 
