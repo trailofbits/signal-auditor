@@ -12,11 +12,16 @@ categories = ["cryptography", "command-line-utilities"]
 crypto-common = "0.1.6"
 ed25519-dalek = { version = "2.2.0", features = ["asm", "pkcs8"] }
 generic-array = {version = "0.14.7", features = ["more_lengths"]}
-prost = "0.14.1"
 sha2 = { version = "0.10.9", features = ["asm", "asm-aarch64", "sha2-asm"] }
+tonic = "0.13"
+prost = "0.13"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+
+
 
 [build-dependencies]
-prost-build = "0.14.1"
+tonic-build = "0.13.1"
+
 
 [dev-dependencies]
 aes = "0.8.4"
