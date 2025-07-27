@@ -18,15 +18,12 @@ client_key_path: "certs/tob_staging_client.key"
 # ca_cert_path: "certs/ca.crt"
 
 # Default batch size for audit requests
-# This determines how many log entries to fetch in a single request
 default_batch_size: 1000
 
 # Maximum number of retries for failed requests
-# The client will retry failed requests up to this many times
 max_retries: 3
 
 # Timeout for requests in seconds
-# Requests that take longer than this will be considered failed
 request_timeout_seconds: 30
 
 # Signal signing public key (PEM Ed25519)
@@ -38,9 +35,11 @@ vrf_public_key: "certs/staging_vrf_public_key.crt"
 # Auditor Signing Key (PEM E25519 pkcs8 private key)
 auditor_signing_key: "certs/tob_staging_eddsa.pem"
 
+# Steady-state (post-sync) poll interval in seconds
 poll_interval_seconds: 10
 
+# File-based log cache storage
 storage_path: "data/staging.bin"
 
-# Maximum number of concurrent requests to queue
+# Maximum number of concurrent requests to queue during sync
 max_concurrent_requests: 2
