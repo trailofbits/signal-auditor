@@ -6,6 +6,7 @@
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
 use ed25519_dalek::VerifyingKey as Ed25519PublicKey;
+use crate::proto::transparency::AuditorTreeHead;
 
 use crate::Hash;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -61,7 +62,7 @@ impl Auditor {
     }
 
     /// Sign a log head at a given time.
-    pub fn sign_at_time(&self, head: Hash, size: u64, time: u64) -> Vec<u8> {
+    pub fn sign_at_time(&self, head: Hash, size: u64, time: i64) -> AuditorTreeHead {
         let config = &self.config;
         let mut msg = Vec::new();
         msg.extend_from_slice(&[0, 0]); //Ciphersuite
@@ -91,15 +92,20 @@ impl Auditor {
         msg.extend_from_slice(head.as_slice());
 
         let sig = self.key.sign(&msg);
-        sig.to_vec()
+        
+        AuditorTreeHead {
+            tree_size: size,
+            signature: sig.to_vec(),
+            timestamp: time,
+        }
     }
 
     /// Sign a log head at the current time.
-    pub fn sign_head(&self, head: Hash, size: u64) -> Vec<u8> {
+    pub fn sign_head(&self, head: Hash, size: u64) -> AuditorTreeHead {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_secs();
-        self.sign_at_time(head, size, ts)
+            .as_millis();
+        self.sign_at_time(head, size, ts as i64)
     }
 }

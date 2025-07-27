@@ -20,12 +20,16 @@
 //! The tree also supports a "fake" update, which is used to replace a stand-in hash
 //! with a new stand-in hash. This is used to mask the metadata of user updates.
 
-use crate::proto::AuditorUpdate;
-use crate::proto::auditor_proof::{DifferentKey, Proof, SameKey};
+use crate::proto::transparency::AuditorUpdate;
+use crate::proto::transparency::auditor_proof::{DifferentKey, Proof, SameKey};
 use crate::{Hash, Index, Seed, try_into_hash};
 use sha2::{Digest, Sha256};
+use serde::{Serialize, Deserialize};
+use anyhow::{Result, anyhow};
+
 
 /// A head of the prefix tree, at a particular position in the top-level log.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PrefixTreeCache {
     pub(crate) head: Hash,
     pub(crate) size: u64,
@@ -62,26 +66,26 @@ pub(crate) enum PrefixTreeUpdate {
 
 // Convert an auditor update off the wire into a prefix tree update.
 impl TryFrom<AuditorUpdate> for PrefixTreeUpdate {
-    type Error = String;
+    type Error = anyhow::Error;
     fn try_from(update: AuditorUpdate) -> Result<Self, Self::Error> {
-        let proof = update.proof.and_then(|x| x.proof).ok_or("Missing proof")?;
+        let proof = update.proof.and_then(|x| x.proof).ok_or(anyhow!("Missing proof"))?;
         match proof {
             Proof::NewTree(_) => {
                 // New trees always start with one real leaf.
                 if !update.real {
-                    return Err("Fake update".to_string());
+                    return Err(anyhow!("Fake update"));
                 }
                 Ok(PrefixTreeUpdate::NewTree {
-                    index: update.index.try_into().map_err(|_| "Invalid index")?,
-                    seed: update.seed.try_into().map_err(|_| "Invalid seed")?,
+                    index: update.index.try_into().map_err(|_| anyhow!("Invalid index"))?,
+                    seed: update.seed.try_into().map_err(|_| anyhow!("Invalid seed"))?,
                 })
             }
             Proof::DifferentKey(DifferentKey { copath, old_seed }) => {
                 Ok(PrefixTreeUpdate::DifferentKey {
                     real: update.real,
-                    index: update.index.try_into().map_err(|_| "Invalid index")?,
-                    seed: update.seed.try_into().map_err(|_| "Invalid seed")?,
-                    old_seed: old_seed.try_into().map_err(|_| "Invalid old seed")?,
+                    index: update.index.try_into().map_err(|_| anyhow!("Invalid index"))?,
+                    seed: update.seed.try_into().map_err(|_| anyhow!("Invalid seed"))?,
+                    old_seed: old_seed.try_into().map_err(|_| anyhow!("Invalid old seed"))?,
                     copath: copath
                         .into_iter()
                         .map(try_into_hash)
@@ -95,16 +99,16 @@ impl TryFrom<AuditorUpdate> for PrefixTreeUpdate {
             }) => {
                 // Real leaves cannot be replaced with fake nodes.
                 if !update.real {
-                    return Err("Fake update".to_string());
+                    return Err(anyhow!("Fake update"));
                 }
 
                 Ok(PrefixTreeUpdate::SameKey {
-                    index: update.index.try_into().map_err(|_| "Invalid index")?,
+                    index: update.index.try_into().map_err(|_| anyhow!("Invalid index"))?,
                     copath: copath
                         .into_iter()
                         .map(try_into_hash)
                         .collect::<Result<Vec<_>, _>>()?,
-                    seed: update.seed.try_into().map_err(|_| "Invalid seed")?,
+                    seed: update.seed.try_into().map_err(|_| anyhow!("Invalid seed"))?,
                     counter,
                     position,
                 })
@@ -133,11 +137,11 @@ impl PrefixTreeCache {
     /// # Errors
     ///
     /// Returns an error if the update is malformed or inconsistent with the current state.
-    pub(crate) fn apply_update(&mut self, update: PrefixTreeUpdate) -> Result<(), String> {
+    pub(crate) fn apply_update(&mut self, update: PrefixTreeUpdate) -> Result<(), anyhow::Error> {
         let proof = match update {
             PrefixTreeUpdate::NewTree { index, seed } => {
                 if self.is_initialized() {
-                    return Err("Tree already initialized".to_string());
+                    return Err(anyhow!("Tree already initialized"));
                 }
 
                 PrefixProof::real(
@@ -158,7 +162,7 @@ impl PrefixTreeCache {
                 position,
             } => {
                 if !self.is_initialized() {
-                    return Err("Tree not initialized".to_string());
+                    return Err(anyhow!("Tree not initialized"));
                 }
 
                 // Check that lookup at counter, position is the same as the old root.
@@ -174,14 +178,14 @@ impl PrefixTreeCache {
 
                 // Check the proof is consistent with the current root.
                 if proof.compute_root() != self.head {
-                    return Err("Old root mismatch".to_string());
+                    return Err(anyhow!("Old root mismatch"));
                 }
 
                 // Update the cache
                 PrefixProof::real(
                     &PrefixLeaf {
                         index,
-                        counter: counter + 1,
+                        counter: counter.checked_add(1).ok_or(anyhow!("Counter overflow"))?,
                         // Tracks the _first_ time the index was inserted.
                         position,
                     },
@@ -197,7 +201,7 @@ impl PrefixTreeCache {
                 copath,
             } => {
                 if !self.is_initialized() {
-                    return Err("Tree not initialized".to_string());
+                    return Err(anyhow!("Tree not initialized"));
                 }
 
                 // DifferentKey updates always replace a fake node.
@@ -206,7 +210,7 @@ impl PrefixTreeCache {
 
                 // Check the proof is consistent with the current root.
                 if proof.compute_root() != self.head {
-                    return Err("Old root mismatch".to_string());
+                    return Err(anyhow!("Old root mismatch"));
                 }
 
                 if real {
@@ -283,8 +287,8 @@ impl PrefixProof {
     /// Constructs a proof for a fake insertion.
     /// The insertion replaces a stand-in hash along the direct
     /// path to `index` at height `copath.len()`.
-    fn fake(index: &Index, copath: &[Hash], seed: &Seed) -> Result<Self, String> {
-        let level: u8 = (copath.len() - 1).try_into().or(Err("Copath too long"))?;
+    fn fake(index: &Index, copath: &[Hash], seed: &Seed) -> Result<Self, anyhow::Error> {
+        let level: u8 = (copath.len() - 1).try_into().or(Err(anyhow!("Copath too long")))?;
 
         let value = stand_in_hash(seed, level);
 
@@ -298,9 +302,9 @@ impl PrefixProof {
     /// Constructs a proof for a new leaf insertion.
     /// The copath is generated pseudorandomly at the time of insertion.
     /// using the `seed` parameter.
-    fn real(leaf: &PrefixLeaf, copath: &[Hash], seed: &Seed) -> Result<Self, String> {
+    fn real(leaf: &PrefixLeaf, copath: &[Hash], seed: &Seed) -> Result<Self, anyhow::Error> {
         if copath.len() > 256 {
-            return Err("Copath too long".to_string());
+            return Err(anyhow!("Copath too long"));
         }
 
         // TODO - use iterators to avoid copying
@@ -344,8 +348,8 @@ mod tests {
     use aes::cipher::{BlockEncrypt, KeyInit};
     use generic_array::GenericArray;
 
-    use crate::proto::auditor_proof::{DifferentKey, Proof};
-    use crate::proto::{AuditorProof, AuditorUpdate};
+    use crate::proto::transparency::auditor_proof::{DifferentKey, Proof};
+    use crate::proto::transparency::{AuditorProof, AuditorUpdate};
 
     fn seed(position: u64) -> Seed {
         // Encrypt "position" with zero AES seed

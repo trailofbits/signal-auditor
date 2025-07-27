@@ -8,12 +8,14 @@
 
 use sha2::{Digest, Sha256};
 use std::mem;
+use serde::{Serialize, Deserialize};
 
 use crate::log::LogTreeCache;
 use crate::prefix::PrefixTreeCache;
-use crate::proto;
+
 use crate::{Hash, try_into_hash};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransparencyLog {
     log_cache: LogTreeCache,
     prefix_cache: PrefixTreeCache,
@@ -41,7 +43,7 @@ impl TransparencyLog {
         self.size() > 0
     }
 
-    pub fn apply_update(&mut self, mut update: proto::AuditorUpdate) -> Result<(), String> {
+    pub fn apply_update(&mut self, mut update: crate::proto::transparency::AuditorUpdate) -> Result<(), anyhow::Error> {
         // Take the commitment out of the update, this is not used by the prefix tree.
         let commitment = try_into_hash(mem::take(&mut update.commitment))?;
 
@@ -50,17 +52,17 @@ impl TransparencyLog {
         let prefix_root = self
             .prefix_cache
             .root()
-            .ok_or("Prefix tree not initialized")?;
+            .ok_or(anyhow::anyhow!("Prefix tree not initialized"))?;
         let leaf = log_leaf(prefix_root, commitment);
         self.log_cache.insert(&leaf);
         Ok(())
     }
 
-    pub fn log_root(&self) -> Result<Hash, String> {
+    pub fn log_root(&self) -> Result<Hash, anyhow::Error> {
         if !self.is_initialized() {
-            return Err("Log is not initialized".to_string());
+            return Err(anyhow::anyhow!("Log is not initialized"));
         }
-        Ok(self.log_cache.root())
+        Ok(self.log_cache.root().ok_or(anyhow::anyhow!("Log tree is empty"))?)
     }
 }
 

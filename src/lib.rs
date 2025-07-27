@@ -7,13 +7,20 @@ use crypto_common::OutputSizeUser;
 use generic_array::GenericArray;
 
 pub mod auditor;
+pub mod client;
 pub mod log;
 pub mod prefix;
 pub mod transparency;
+pub mod storage;
 
 /// Protocol buffer definitions for transparency log network messages.
 pub mod proto {
-    include!(concat!(env!("OUT_DIR"), "/transparency.rs"));
+    pub mod transparency {
+        include!(concat!(env!("OUT_DIR"), "/transparency.rs"));
+    }
+    pub mod kt {
+        include!(concat!(env!("OUT_DIR"), "/kt.rs"));
+    }
 }
 
 type Hash = GenericArray<u8, <Sha256 as OutputSizeUser>::OutputSize>;
@@ -22,8 +29,8 @@ type Hash = GenericArray<u8, <Sha256 as OutputSizeUser>::OutputSize>;
 /// # Errors
 ///
 /// Returns an error if the input is not 32 bytes.
-fn try_into_hash(x: Vec<u8>) -> Result<Hash, String> {
-    let arr: [u8; 32] = x.try_into().map_err(|_| "Invalid hash")?;
+fn try_into_hash(x: Vec<u8>) -> Result<Hash, anyhow::Error> {
+    let arr: [u8; 32] = x.try_into().map_err(|_| anyhow::anyhow!("Invalid hash"))?;
     Ok(arr.into())
 }
 
@@ -34,9 +41,9 @@ type Seed = [u8; 16];
 mod tests {
     use super::*;
     use hex_literal::hex;
-    use proto::AuditorProof;
-    use proto::AuditorUpdate;
-    use proto::auditor_proof::{NewTree, Proof};
+    use proto::transparency::AuditorProof;
+    use proto::transparency::AuditorUpdate;
+    use proto::transparency::auditor_proof::{NewTree, Proof};
     use transparency::TransparencyLog;
 
     //real=true, index=72304a54df58d7d2673f7f99fe1689ca939eebc55741f3d1335904cb9c8564e4, seed=c3009d216ad487428a6f904ede447bc9, commitment=5f799a1d6d34dffacbec4d47c4f200a6be09de9b6d444ad27e87ba0beaad3607, proof=newTree{}

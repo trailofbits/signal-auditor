@@ -1,0 +1,45 @@
+# Key Transparency Auditor Client Configuration
+# This file configures the client for connecting to a Key Transparency service
+
+# The server endpoint to connect to (e.g., "https://example.com:443")
+server_endpoint: "https://audit.kt.staging.signal.org"
+
+# Path to the client certificate file (PEM format)
+# This certificate is used for mTLS authentication
+client_cert_path: "certs/tob_staging_client.crt"
+
+# Path to the client private key file (PEM format)
+# This private key corresponds to the client certificate
+client_key_path: "certs/tob_staging_client.key"
+
+# Path to the CA certificate file (PEM format) for server verification
+# Only needed if the server is not using a CA trusted by system roots
+# Disables system roots when present
+# ca_cert_path: "certs/ca.crt"
+
+# Default batch size for audit requests
+# This determines how many log entries to fetch in a single request
+default_batch_size: 1000
+
+# Maximum number of retries for failed requests
+# The client will retry failed requests up to this many times
+max_retries: 3
+
+# Timeout for requests in seconds
+# Requests that take longer than this will be considered failed
+request_timeout_seconds: 30
+
+# Signal signing public key (PEM Ed25519)
+signal_public_key: "certs/staging_signing_public_key.crt"
+
+# Signal VRF public key (PEM Ed25519)
+vrf_public_key: "certs/staging_vrf_public_key.crt"
+
+# Auditor Signing Key (PEM E25519 pkcs8 private key)
+auditor_signing_key: "certs/tob_staging_eddsa.pem"
+
+poll_interval_seconds: 10
+
+storage_path: "data/staging.bin"
+
+

@@ -5,7 +5,7 @@ use signal_auditor::auditor::{Auditor, PublicConfig};
 
 use ed25519_dalek::{SigningKey, VerifyingKey, pkcs8::DecodePublicKey};
 
-use signal_auditor::proto as transparency;
+use signal_auditor::proto::transparency;
 
 mod test_vectors {
     include!(concat!(env!("OUT_DIR"), "/test_vectors.rs"));
@@ -71,5 +71,5 @@ fn test_signatures() {
 
     let head = GenericArray::clone_from_slice(&vector.root);
     let sig = auditor.sign_at_time(head, vector.tree_size, vector.timestamp as u64);
-    assert_eq!(sig, vector.signature);
+    assert_eq!(sig.signature, vector.signature);
 }
