@@ -42,4 +42,5 @@ poll_interval_seconds: 10
 
 storage_path: "data/staging.bin"
 
-
+# Maximum number of concurrent requests to queue
+max_concurrent_requests: 2
