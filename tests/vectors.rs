@@ -70,6 +70,6 @@ fn test_signatures() {
     let auditor = Auditor::new(config, key);
 
     let head = GenericArray::clone_from_slice(&vector.root);
-    let sig = auditor.sign_at_time(head, vector.tree_size, vector.timestamp as u64);
+    let sig = auditor.sign_at_time(head, vector.tree_size, vector.timestamp);
     assert_eq!(sig.signature, vector.signature);
 }

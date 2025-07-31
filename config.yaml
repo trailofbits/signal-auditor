@@ -4,6 +4,9 @@
 # The server endpoint to connect to (e.g., "https://example.com:443")
 server_endpoint: "https://audit.kt.staging.signal.org"
 
+# TODO: Load client mTLS secrets from KMS
+# These can be safely modified by regular IAM perms
+
 # Path to the client certificate file (PEM format)
 # This certificate is used for mTLS authentication
 client_cert_path: "certs/tob_staging_client.crt"
@@ -25,6 +28,8 @@ max_retries: 3
 
 # Timeout for requests in seconds
 request_timeout_seconds: 30
+
+# TODO: Load keys from KMS
 
 # Signal signing public key (PEM Ed25519)
 signal_public_key: "certs/staging_signing_public_key.crt"

@@ -1,14 +1,28 @@
 use crate::transparency::TransparencyLog;
-use std::path::{Path, PathBuf};
-use std::fs::File;
-use std::io::Write;
+use crate::client::ClientConfig;
+
+// Currently we do not actually use generic storage impls
+// but instead use feature flags to select the storage backend
+
+#[cfg(feature = "storage-gcp")]
+mod gcp;
+#[cfg(feature = "storage-gcp")]
+pub use gcp::GcpBackend as Backend;
 
 
+#[cfg(not(feature = "storage-gcp"))]
+mod filestore;
+#[cfg(not(feature = "storage-gcp"))]
+pub use filestore::FileBackend as Backend;
 
+#[allow(async_fn_in_trait)]
+pub trait Storage: Sized {
 
-pub trait Storage {
+    /// Initialize the storage from a config
+    async fn init_from_config(config: &ClientConfig) -> Result<Self, anyhow::Error>;
+
     // Commit a log head to storage
-    fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error>;
+    async fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error>;
 
     /// Get the log head from storage, if it exists
     /// Returns None if the storage is not initialized
@@ -16,41 +30,9 @@ pub trait Storage {
     /// # Errors
     ///
     /// Returns an error if an OS error occurs or the log data is invalid
-    fn get_head(&self) -> Result<Option<TransparencyLog>, anyhow::Error>;
+    async fn get_head(&self) -> Result<Option<TransparencyLog>, anyhow::Error>;
 }
 
-pub struct FileStorage {
-    path: PathBuf,
-}
-
-impl FileStorage {
-    pub fn new(path: &Path) -> Result<Self, anyhow::Error> {
-        // Create the directory if it doesn't exist
-        std::fs::create_dir_all(path.parent().unwrap())?;
-
-        Ok(Self { path: path.to_path_buf() })
-    }
-}
-
-impl Storage for FileStorage {
-    fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error> {
-        let serialized = serde_cbor::to_vec(head)?;
-
-        let mut file = File::create(&self.path)?;
-        file.write_all(&serialized)?;
-        Ok(())
-    }
-
-    fn get_head(&self) -> Result<Option<TransparencyLog>, anyhow::Error> {
-        if !self.path.exists() {
-            return Ok(None);
-        }
-
-        let file = File::open(&self.path)?;
-        let log_head: TransparencyLog = serde_cbor::from_reader(file)?;
-        Ok(Some(log_head)) // TODO - return error if the log is invalid
-    }
-}
 
 
 

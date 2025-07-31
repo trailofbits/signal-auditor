@@ -13,7 +13,7 @@ use crate::proto::kt::{
 };
 use crate::transparency::TransparencyLog;
 use tonic::transport::{Channel, Endpoint, ClientTlsConfig, Identity, Certificate};
-use crate::storage::{FileStorage, Storage};
+use crate::storage::{Storage, Backend};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -31,8 +31,6 @@ pub struct ClientConfig {
     pub max_retries: u32,
     /// Timeout for requests in seconds
     pub request_timeout_seconds: u64,
-    /// Path to the storage file
-    pub storage_path: Option<PathBuf>,
     /// KT Log Public Key
     pub signal_public_key: PathBuf,
     /// VRF Public Key
@@ -43,13 +41,19 @@ pub struct ClientConfig {
     pub poll_interval_seconds: u64,
     /// Maximum number of concurrent requests to queue
     pub max_concurrent_requests: usize,
+    /// Path to the storage file
+    pub storage_path: Option<PathBuf>,
+
+    /// GCP bucket name
+    #[cfg(feature = "storage-gcp")]
+    pub gcp_bucket: Option<String>,
 }
 
 pub struct KeyTransparencyClient {
     endpoint: Endpoint,
     config: ClientConfig,
     transparency_log: TransparencyLog,
-    storage: Box<dyn Storage>,
+    storage: Backend,
     auditor: Auditor, // holds the key material for the auditor
 }
 
@@ -57,24 +61,22 @@ impl KeyTransparencyClient {
     /// Create a new client with the given configuration
     pub async fn new(config: ClientConfig) -> Result<Self, anyhow::Error> {
         let identity = Identity::from_pem(
-            std::fs::read(&config.client_cert_path)?,
-            std::fs::read(&config.client_key_path)?,
+            std::fs::read(&config.client_cert_path).map_err(|e| anyhow::anyhow!("Failed to read client cert: {}", e))?,
+            std::fs::read(&config.client_key_path).map_err(|e| anyhow::anyhow!("Failed to read client key: {}", e))?,
         );
 
         let mut tls_config = ClientTlsConfig::new().identity(identity);
         if let Some(ca_cert_path) = &config.ca_cert_path {
-            let ca_certificate = Certificate::from_pem(std::fs::read(&ca_cert_path)?);
+            let ca_certificate = Certificate::from_pem(std::fs::read(ca_cert_path)?);
             tls_config = tls_config.ca_certificate(ca_certificate);
         }
         else {
             tls_config = tls_config.with_enabled_roots();
         }
         
-        // TODO - other storage options, feature flags, etc
-        let file_storage = FileStorage::new(config.storage_path.as_ref().expect("File storage path not set"))?;
-        let storage = Box::new(file_storage);
+        let storage = Backend::init_from_config(&config).await?;
 
-        let transparency_log = storage.get_head()?.unwrap_or_else(|| {
+        let transparency_log = storage.get_head().await?.unwrap_or_else(|| {
             println!("No log head found, creating new log"); 
             TransparencyLog::new()
         });
@@ -202,7 +204,7 @@ impl KeyTransparencyClient {
                 self.transparency_log.apply_update(update.clone())?;
             }
 
-            self.storage.commit_head(&self.transparency_log)?;
+            self.storage.commit_head(&self.transparency_log).await?;
 
             if last_reported.elapsed().as_secs() > 2 {
                 let diff = self.transparency_log.size() - progress;
