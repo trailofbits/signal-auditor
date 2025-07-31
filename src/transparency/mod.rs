@@ -15,6 +15,7 @@ use crate::prefix::PrefixTreeCache;
 
 use crate::{Hash, try_into_hash};
 
+// TODO - this is serializing byte vecs as arrays of ints, which is not optimal
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransparencyLog {
     log_cache: LogTreeCache,
@@ -70,5 +71,5 @@ fn log_leaf(prefix_root: Hash, commitment: Hash) -> Hash {
     let mut hasher = Sha256::new();
     hasher.update(prefix_root);
     hasher.update(commitment);
-    hasher.finalize()
+    hasher.finalize().into()
 }

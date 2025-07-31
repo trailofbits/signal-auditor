@@ -41,12 +41,14 @@ pub struct ClientConfig {
     pub poll_interval_seconds: u64,
     /// Maximum number of concurrent requests to queue
     pub max_concurrent_requests: usize,
-    /// Path to the storage file
-    pub storage_path: Option<PathBuf>,
 
     /// GCP bucket name
     #[cfg(feature = "storage-gcp")]
     pub gcp_bucket: Option<String>,
+
+    /// Path to the storage file
+    #[cfg(not(feature = "storage-gcp"))]
+    pub storage_path: Option<PathBuf>,
 }
 
 pub struct KeyTransparencyClient {
@@ -204,7 +206,6 @@ impl KeyTransparencyClient {
                 self.transparency_log.apply_update(update.clone())?;
             }
 
-            self.storage.commit_head(&self.transparency_log).await?;
 
             if last_reported.elapsed().as_secs() > 2 {
                 let diff = self.transparency_log.size() - progress;
@@ -226,14 +227,14 @@ impl KeyTransparencyClient {
             }
 
             if syncing && !response.more {
-                // Submit the log head to the server
-                println!("Log sync successful!");
+                println!("\nLog sync successful!");
                 // Drain the queue
                 queue.clear();
                 syncing = false
             }
 
             if !syncing {
+                self.storage.commit_head(&self.transparency_log).await?;
                 self.submit_auditor_head(&mut client).await?;
                 let poll_interval = Duration::from_secs(self.config.poll_interval_seconds);
                 tokio::time::sleep(poll_interval).await;

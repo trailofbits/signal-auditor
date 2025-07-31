@@ -24,7 +24,7 @@ impl Storage for FileBackend {
     }
 
     async fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error> {
-        let serialized = serde_cbor::to_vec(head)?;
+        let serialized = serde_cbor::ser::to_vec_packed(head)?;
 
         let mut file = File::create(&self.path)?;
         file.write_all(&serialized)?;

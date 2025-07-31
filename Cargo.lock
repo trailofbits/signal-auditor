@@ -761,7 +761,6 @@ version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
- "serde",
  "typenum",
  "version_check",
 ]
@@ -2153,6 +2152,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes"
+version = "0.11.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8437fd221bde2d4ca316d61b90e337e9e702b3820b87d63caa9ba6c02bd06d96"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_cbor"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2247,7 +2255,6 @@ dependencies = [
  "criterion",
  "crypto-common",
  "ed25519-dalek",
- "generic-array",
  "google-cloud-storage",
  "hex",
  "hex-literal",
@@ -2255,6 +2262,7 @@ dependencies = [
  "prost",
  "rand",
  "serde",
+ "serde_bytes",
  "serde_cbor",
  "serde_yaml",
  "sha2",

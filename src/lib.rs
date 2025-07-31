@@ -1,11 +1,6 @@
 //! An implementation of the Third-Party Auditor role for the 
 //! [Signal Key Transparency Log.](https://github.com/signalapp/key-transparency-server)
 
-use sha2::Sha256;
-
-use crypto_common::OutputSizeUser;
-use generic_array::GenericArray;
-
 pub mod auditor;
 pub mod client;
 pub mod log;
@@ -23,7 +18,7 @@ pub mod proto {
     }
 }
 
-type Hash = GenericArray<u8, <Sha256 as OutputSizeUser>::OutputSize>;
+type Hash = [u8; 32];
 /// Convert a vector of bytes into a hash.
 ///
 /// # Errors
@@ -61,7 +56,7 @@ mod tests {
         });
 
         let expected_log_root =
-            hex!("1e6fdd7508a05b5ba2661f7eec7e8df0a0ee9a277ca5b345f17fbe8e6aa8e9d1").into();
+            hex!("1e6fdd7508a05b5ba2661f7eec7e8df0a0ee9a277ca5b345f17fbe8e6aa8e9d1");
 
         let update = AuditorUpdate {
             real: true,
