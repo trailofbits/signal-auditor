@@ -23,10 +23,9 @@
 use crate::proto::transparency::AuditorUpdate;
 use crate::proto::transparency::auditor_proof::{DifferentKey, Proof, SameKey};
 use crate::{Hash, Index, Seed, try_into_hash};
-use sha2::{Digest, Sha256};
-use serde::{Serialize, Deserialize};
 use anyhow::{Result, anyhow};
-
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// A head of the prefix tree, at a particular position in the top-level log.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -69,7 +68,10 @@ pub(crate) enum PrefixTreeUpdate {
 impl TryFrom<AuditorUpdate> for PrefixTreeUpdate {
     type Error = anyhow::Error;
     fn try_from(update: AuditorUpdate) -> Result<Self, Self::Error> {
-        let proof = update.proof.and_then(|x| x.proof).ok_or(anyhow!("Missing proof"))?;
+        let proof = update
+            .proof
+            .and_then(|x| x.proof)
+            .ok_or(anyhow!("Missing proof"))?;
         match proof {
             Proof::NewTree(_) => {
                 // New trees always start with one real leaf.
@@ -77,16 +79,30 @@ impl TryFrom<AuditorUpdate> for PrefixTreeUpdate {
                     return Err(anyhow!("Fake update"));
                 }
                 Ok(PrefixTreeUpdate::NewTree {
-                    index: update.index.try_into().map_err(|_| anyhow!("Invalid index"))?,
-                    seed: update.seed.try_into().map_err(|_| anyhow!("Invalid seed"))?,
+                    index: update
+                        .index
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid index"))?,
+                    seed: update
+                        .seed
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid seed"))?,
                 })
             }
             Proof::DifferentKey(DifferentKey { copath, old_seed }) => {
                 Ok(PrefixTreeUpdate::DifferentKey {
                     real: update.real,
-                    index: update.index.try_into().map_err(|_| anyhow!("Invalid index"))?,
-                    seed: update.seed.try_into().map_err(|_| anyhow!("Invalid seed"))?,
-                    old_seed: old_seed.try_into().map_err(|_| anyhow!("Invalid old seed"))?,
+                    index: update
+                        .index
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid index"))?,
+                    seed: update
+                        .seed
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid seed"))?,
+                    old_seed: old_seed
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid old seed"))?,
                     copath: copath
                         .into_iter()
                         .map(try_into_hash)
@@ -104,12 +120,18 @@ impl TryFrom<AuditorUpdate> for PrefixTreeUpdate {
                 }
 
                 Ok(PrefixTreeUpdate::SameKey {
-                    index: update.index.try_into().map_err(|_| anyhow!("Invalid index"))?,
+                    index: update
+                        .index
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid index"))?,
                     copath: copath
                         .into_iter()
                         .map(try_into_hash)
                         .collect::<Result<Vec<_>, _>>()?,
-                    seed: update.seed.try_into().map_err(|_| anyhow!("Invalid seed"))?,
+                    seed: update
+                        .seed
+                        .try_into()
+                        .map_err(|_| anyhow!("Invalid seed"))?,
                     counter,
                     position,
                 })
@@ -289,7 +311,9 @@ impl PrefixProof {
     /// The insertion replaces a stand-in hash along the direct
     /// path to `index` at height `copath.len()`.
     fn fake(index: &Index, copath: &[Hash], seed: &Seed) -> Result<Self, anyhow::Error> {
-        let level: u8 = (copath.len() - 1).try_into().or(Err(anyhow!("Copath too long")))?;
+        let level: u8 = (copath.len() - 1)
+            .try_into()
+            .or(Err(anyhow!("Copath too long")))?;
 
         let value = stand_in_hash(seed, level);
 
@@ -356,8 +380,9 @@ mod tests {
         let mut buffer = [0u8; 16];
         buffer[8..].copy_from_slice(&position.to_be_bytes());
         let aes = Aes128::new(&[0u8; 16].into());
-        aes.encrypt_block(&mut buffer.into());
-        buffer.into()
+        let mut block = buffer.into();
+        aes.encrypt_block(&mut block);
+        block.into()
     }
 
     #[test]
@@ -388,8 +413,7 @@ mod tests {
         let old_seed = seed(0);
         let seed = seed(1).to_vec();
         let commitment = Hash::default().to_vec();
-        let old_root =
-            hex!("6eefbfcdf7b929b73963cb21eb882a2a3e49e8958fe25795df82d099e551915c");
+        let old_root = hex!("6eefbfcdf7b929b73963cb21eb882a2a3e49e8958fe25795df82d099e551915c");
         let expected_root =
             hex!("55a94bcb3a3958a83fab0053bdb553b4774b19a6516ac7fe0811a498396c2d36");
 
@@ -433,8 +457,7 @@ mod tests {
         let mut index: Vec<u8> = Index::default().into();
         index[0] = 0xc0;
         let commitment = Hash::default().to_vec();
-        let old_root =
-            hex!("55a94bcb3a3958a83fab0053bdb553b4774b19a6516ac7fe0811a498396c2d36");
+        let old_root = hex!("55a94bcb3a3958a83fab0053bdb553b4774b19a6516ac7fe0811a498396c2d36");
         let expected_root =
             hex!("82c7616b35828d31468590ecec7e3b62a31c7ec7a6874229da90a9cebf28a1df");
 

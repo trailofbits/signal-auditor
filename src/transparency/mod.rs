@@ -1,14 +1,14 @@
 //! The Transparency Log is a Log Tree that tracks public key registrations.
-//! 
-//! 
+//!
+//!
 //! Each leaf is a pair (`prefix_root`, `commitment`)
 //! where `prefix_root` is the root of the prefix tree
 //! that tracks key versions, and `commitment` is the
 //! commitment to the public key.
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::mem;
-use serde::{Serialize, Deserialize};
 
 use crate::log::LogTreeCache;
 use crate::prefix::PrefixTreeCache;
@@ -44,7 +44,10 @@ impl TransparencyLog {
         self.size() > 0
     }
 
-    pub fn apply_update(&mut self, mut update: crate::proto::transparency::AuditorUpdate) -> Result<(), anyhow::Error> {
+    pub fn apply_update(
+        &mut self,
+        mut update: crate::proto::transparency::AuditorUpdate,
+    ) -> Result<(), anyhow::Error> {
         // Take the commitment out of the update, this is not used by the prefix tree.
         let commitment = try_into_hash(mem::take(&mut update.commitment))?;
 
@@ -63,7 +66,9 @@ impl TransparencyLog {
         if !self.is_initialized() {
             return Err(anyhow::anyhow!("Log is not initialized"));
         }
-        Ok(self.log_cache.root().ok_or(anyhow::anyhow!("Log tree is empty"))?)
+        self.log_cache
+            .root()
+            .ok_or(anyhow::anyhow!("Log tree is empty"))
     }
 }
 

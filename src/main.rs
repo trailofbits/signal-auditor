@@ -1,6 +1,5 @@
-use std::{path::PathBuf, time::Duration};
 use signal_auditor::client::{KeyTransparencyClient, load_config_from_file};
-
+use std::{path::PathBuf, time::Duration};
 
 // TODO - improve error handling, distinguish between fatal and non-fatal errors
 // TODO - distinguish between measured and unmeasured config items

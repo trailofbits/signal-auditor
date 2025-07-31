@@ -3,10 +3,10 @@
 //!
 //! Log tracking is not included in this module
 
+use crate::proto::transparency::AuditorTreeHead;
 use ed25519_dalek::Signer;
 use ed25519_dalek::SigningKey as Ed25519SigningKey;
 use ed25519_dalek::VerifyingKey as Ed25519PublicKey;
-use crate::proto::transparency::AuditorTreeHead;
 
 use crate::Hash;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -92,7 +92,7 @@ impl Auditor {
         msg.extend_from_slice(head.as_slice());
 
         let sig = self.key.sign(&msg);
-        
+
         AuditorTreeHead {
             tree_size: size,
             signature: sig.to_vec(),

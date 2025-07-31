@@ -30,7 +30,7 @@ fn test_should_succeed() {
         let update = vector.update.unwrap();
         let expected_root = vector.log_root;
 
-        println!("Applying update: {:x?}", update);
+        println!("Applying update: {update:x?}");
 
         log.apply_update(update).unwrap();
         assert_eq!(log.log_root().unwrap().to_vec(), expected_root);
@@ -45,13 +45,13 @@ fn test_should_fail() {
         let description = vector.description;
         let mut result = Ok(());
         for update in vector.updates.into_iter() {
-            println!("Applying update: {:x?}", update);
+            println!("Applying update: {update:x?}");
 
             result = log.apply_update(update);
         }
 
         // TODO - assert particular errors
-        assert!(result.is_err(), "Expected error {}", description);
+        assert!(result.is_err(), "Expected error {description}");
     }
 }
 

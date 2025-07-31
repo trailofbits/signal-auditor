@@ -37,8 +37,8 @@
 //! ```
 
 use crate::Hash;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use serde::{Serialize, Deserialize};
 
 /// A log node is a root of a maximal balanced subtree.
 /// When size is 1, the node is a leaf.
@@ -90,7 +90,7 @@ impl LogTreeCache {
                 new_node = LogNode {
                     root: tree_hash(&x, &new_node),
                     // Overflow note: this will only overflow
-                    // if the total tree size is > u64::MAX. 
+                    // if the total tree size is > u64::MAX.
                     // This is not achievable in practice
                     size: new_node.size * 2,
                 };

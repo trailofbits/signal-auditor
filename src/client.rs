@@ -1,19 +1,21 @@
-use std::{collections::VecDeque, path::PathBuf};
-use ed25519_dalek::{pkcs8::{DecodePublicKey, DecodePrivateKey}, VerifyingKey, SigningKey};
-use tonic::{Request, Response};
-use serde::{Deserialize, Serialize};
-use std::time::Duration;
-use std::io::Write;
-
-use crate::auditor::{Auditor, PublicConfig};
-use crate::auditor::DeploymentMode;
-use crate::proto::kt::{
-    key_transparency_service_client::KeyTransparencyServiceClient,
-    AuditRequest, AuditResponse,
+use ed25519_dalek::{
+    SigningKey, VerifyingKey,
+    pkcs8::{DecodePrivateKey, DecodePublicKey},
 };
+use serde::{Deserialize, Serialize};
+use std::io::Write;
+use std::time::Duration;
+use std::{collections::VecDeque, path::PathBuf};
+use tonic::{Request, Response};
+
+use crate::auditor::DeploymentMode;
+use crate::auditor::{Auditor, PublicConfig};
+use crate::proto::kt::{
+    AuditRequest, AuditResponse, key_transparency_service_client::KeyTransparencyServiceClient,
+};
+use crate::storage::{Backend, Storage};
 use crate::transparency::TransparencyLog;
-use tonic::transport::{Channel, Endpoint, ClientTlsConfig, Identity, Certificate};
-use crate::storage::{Storage, Backend};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -63,32 +65,31 @@ impl KeyTransparencyClient {
     /// Create a new client with the given configuration
     pub async fn new(config: ClientConfig) -> Result<Self, anyhow::Error> {
         let identity = Identity::from_pem(
-            std::fs::read(&config.client_cert_path).map_err(|e| anyhow::anyhow!("Failed to read client cert: {}", e))?,
-            std::fs::read(&config.client_key_path).map_err(|e| anyhow::anyhow!("Failed to read client key: {}", e))?,
+            std::fs::read(&config.client_cert_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read client cert: {}", e))?,
+            std::fs::read(&config.client_key_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read client key: {}", e))?,
         );
 
         let mut tls_config = ClientTlsConfig::new().identity(identity);
         if let Some(ca_cert_path) = &config.ca_cert_path {
             let ca_certificate = Certificate::from_pem(std::fs::read(ca_cert_path)?);
             tls_config = tls_config.ca_certificate(ca_certificate);
-        }
-        else {
+        } else {
             tls_config = tls_config.with_enabled_roots();
         }
-        
+
         let storage = Backend::init_from_config(&config).await?;
 
         let transparency_log = storage.get_head().await?.unwrap_or_else(|| {
-            println!("No log head found, creating new log"); 
+            println!("No log head found, creating new log");
             TransparencyLog::new()
         });
-
 
         // Read auditor settings
         let signal_public_key = std::fs::read_to_string(&config.signal_public_key)?;
         let vrf_public_key = std::fs::read_to_string(&config.vrf_public_key)?;
         let auditor_signing_key = std::fs::read_to_string(&config.auditor_signing_key)?;
-
 
         let auditor_config = PublicConfig {
             mode: DeploymentMode::ThirdPartyAuditing, // Assume third party auditing, since we're an auditor...
@@ -104,40 +105,48 @@ impl KeyTransparencyClient {
             .tls_config(tls_config)?
             .timeout(Duration::from_secs(config.request_timeout_seconds));
 
-        Ok(Self { endpoint, config, transparency_log, storage, auditor})
+        Ok(Self {
+            endpoint,
+            config,
+            transparency_log,
+            storage,
+            auditor,
+        })
     }
-    
-   
+
     /// Estimate the end of the log by binary search
-    pub async fn estimate_log_end(
-        &mut self,
-    ) -> Result<u64, anyhow::Error> {
+    pub async fn estimate_log_end(&mut self) -> Result<u64, anyhow::Error> {
         let transport = self.endpoint.connect().await?;
         let mut client = KeyTransparencyServiceClient::new(transport);
         // Start at known base and keep doubling until we get an empty response
         let mut low = self.transparency_log.size();
         let mut high = 1;
-        while fetch_audit_entries(&self.config, &mut client, high, Some(1),false).await.is_ok() {
+        while fetch_audit_entries(&self.config, &mut client, high, Some(1), false)
+            .await
+            .is_ok()
+        {
             high *= 2;
         }
 
         // Now binary search between low and high
-        while high-low > 500 {
+        while high - low > 500 {
             let mid = (low + high) / 2;
-            if fetch_audit_entries(&self.config, &mut client, mid, Some(1),false).await.is_err() {
+            if fetch_audit_entries(&self.config, &mut client, mid, Some(1), false)
+                .await
+                .is_err()
+            {
                 high = mid;
-            }
-            else {
+            } else {
                 low = mid + 1;
             }
         }
 
         // Now poll to find the exact end
-        let response = fetch_audit_entries(&self.config, &mut client, low, Some(1000), false).await?;
+        let response =
+            fetch_audit_entries(&self.config, &mut client, low, Some(1000), false).await?;
         if response.updates.is_empty() {
             Err(anyhow::anyhow!("Log end not found"))
-        }
-        else {
+        } else {
             Ok(low + response.updates.len() as u64)
         }
     }
@@ -149,7 +158,10 @@ impl KeyTransparencyClient {
         &mut self,
         client: &mut KeyTransparencyServiceClient<Channel>,
     ) -> Result<Response<()>, anyhow::Error> {
-        let tree_head = self.auditor.sign_head(self.transparency_log.log_root()?, self.transparency_log.size());
+        let tree_head = self.auditor.sign_head(
+            self.transparency_log.log_root()?,
+            self.transparency_log.size(),
+        );
 
         let mut request = Request::new(tree_head);
         request.set_timeout(Duration::from_secs(self.config.request_timeout_seconds));
@@ -162,7 +174,7 @@ impl KeyTransparencyClient {
         let hours = seconds / 3600;
         let minutes = (seconds % 3600) / 60;
         let secs = seconds % 60;
-        format!("{:02}:{:02}:{:02}", hours, minutes, secs)
+        format!("{hours:02}:{minutes:02}:{secs:02}")
     }
 
     /// Run the initial sync to catch up with the log head
@@ -206,7 +218,6 @@ impl KeyTransparencyClient {
                 self.transparency_log.apply_update(update.clone())?;
             }
 
-
             if last_reported.elapsed().as_secs() > 2 {
                 let diff = self.transparency_log.size() - progress;
                 progress = self.transparency_log.size();
@@ -217,12 +228,13 @@ impl KeyTransparencyClient {
                 print!("\r                                                         "); // Clear the line
                 print!("\rProcessing {rate:.2} updates/s");
                 if syncing {
-                    print!(", {} % synced, {} remaining", 
+                    print!(
+                        ", {} % synced, {} remaining",
                         (progress as f64 / initial_log_end as f64 * 100.0).round(),
                         self.hms((initial_log_end - progress) / rate as u64)
                     );
                 }
-                
+
                 std::io::stdout().flush().unwrap();
             }
 
@@ -247,7 +259,7 @@ impl KeyTransparencyClient {
     }
 }
 
-/// Load configuration from a YAML file 
+/// Load configuration from a YAML file
 pub fn load_config_from_file(path: &PathBuf) -> Result<ClientConfig, anyhow::Error> {
     let config_content = std::fs::read_to_string(path)?;
     let config: ClientConfig = serde_yaml::from_str(&config_content)?;
@@ -259,17 +271,16 @@ pub fn save_config_to_file(config: &ClientConfig, path: &PathBuf) -> Result<(), 
     let config_content = serde_yaml::to_string(config)?;
     std::fs::write(path, config_content)?;
     Ok(())
-} 
+}
 
- /// Fetch audit entries starting from the given position
+/// Fetch audit entries starting from the given position
 async fn fetch_audit_entries(
     config: &ClientConfig,
     client: &mut KeyTransparencyServiceClient<Channel>,
     start: u64,
     limit: Option<u64>,
-    retry: bool
+    retry: bool,
 ) -> Result<AuditResponse, anyhow::Error> {
-
     let limit = limit.unwrap_or(config.default_batch_size);
 
     let mut retries = if retry { config.max_retries } else { 0 };
@@ -284,7 +295,10 @@ async fn fetch_audit_entries(
             }
             Err(err) => {
                 if retries == 0 {
-                    return Err(anyhow::anyhow!("Failed to fetch audit entries after {} retries: {err}", config.max_retries));
+                    return Err(anyhow::anyhow!(
+                        "Failed to fetch audit entries after {} retries: {err}",
+                        config.max_retries
+                    ));
                 }
                 let backoff = 2u64.pow(config.max_retries - retries);
                 tokio::time::sleep(Duration::from_secs(backoff)).await;
@@ -292,5 +306,4 @@ async fn fetch_audit_entries(
             }
         }
     }
-    
 }

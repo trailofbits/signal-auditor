@@ -1,12 +1,12 @@
-//! An implementation of the Third-Party Auditor role for the 
+//! An implementation of the Third-Party Auditor role for the
 //! [Signal Key Transparency Log.](https://github.com/signalapp/key-transparency-server)
 
 pub mod auditor;
 pub mod client;
 pub mod log;
 pub mod prefix;
-pub mod transparency;
 pub mod storage;
+pub mod transparency;
 
 /// Protocol buffer definitions for transparency log network messages.
 pub mod proto {
@@ -26,7 +26,7 @@ type Hash = [u8; 32];
 /// Returns an error if the input is not 32 bytes.
 fn try_into_hash(x: Vec<u8>) -> Result<Hash, anyhow::Error> {
     let arr: [u8; 32] = x.try_into().map_err(|_| anyhow::anyhow!("Invalid hash"))?;
-    Ok(arr.into())
+    Ok(arr)
 }
 
 type Index = [u8; 32];
