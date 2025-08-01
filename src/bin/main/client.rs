@@ -1,21 +1,22 @@
+use anyhow::Context;
 use ed25519_dalek::{
     SigningKey, VerifyingKey,
     pkcs8::{DecodePrivateKey, DecodePublicKey},
 };
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::time::Duration;
 use std::{collections::VecDeque, path::PathBuf};
-use tonic::{Request, Response};
+use tonic::{Code, Request, Response, Status};
 
-use crate::auditor::DeploymentMode;
-use crate::auditor::{Auditor, PublicConfig};
-use crate::proto::kt::{
+use signal_auditor::auditor::DeploymentMode;
+use signal_auditor::auditor::{Auditor, PublicConfig};
+use signal_auditor::proto::kt::{
     AuditRequest, AuditResponse, key_transparency_service_client::KeyTransparencyServiceClient,
 };
-use crate::storage::{Backend, Storage};
-use crate::transparency::TransparencyLog;
+use signal_auditor::transparency::TransparencyLog;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
+
+use crate::storage::{Backend, Storage};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
@@ -65,10 +66,8 @@ impl KeyTransparencyClient {
     /// Create a new client with the given configuration
     pub async fn new(config: ClientConfig) -> Result<Self, anyhow::Error> {
         let identity = Identity::from_pem(
-            std::fs::read(&config.client_cert_path)
-                .map_err(|e| anyhow::anyhow!("Failed to read client cert: {}", e))?,
-            std::fs::read(&config.client_key_path)
-                .map_err(|e| anyhow::anyhow!("Failed to read client key: {}", e))?,
+            std::fs::read(&config.client_cert_path).context("Failed to read client cert")?,
+            std::fs::read(&config.client_key_path).context("Failed to read client key")?,
         );
 
         let mut tls_config = ClientTlsConfig::new().identity(identity);
@@ -79,30 +78,44 @@ impl KeyTransparencyClient {
             tls_config = tls_config.with_enabled_roots();
         }
 
-        let storage = Backend::init_from_config(&config).await?;
+        let storage = Backend::init_from_config(&config)
+            .await
+            .context("Failed to initialize storage backend")?;
 
-        let transparency_log = storage.get_head().await?.unwrap_or_else(|| {
-            println!("No log head found, creating new log");
-            TransparencyLog::new()
-        });
+        let transparency_log = storage
+            .get_head()
+            .await
+            .context("Error trying to get log head")?
+            .unwrap_or_else(|| {
+                tracing::info!("No log head found, creating new log");
+                TransparencyLog::new()
+            });
 
         // Read auditor settings
-        let signal_public_key = std::fs::read_to_string(&config.signal_public_key)?;
-        let vrf_public_key = std::fs::read_to_string(&config.vrf_public_key)?;
-        let auditor_signing_key = std::fs::read_to_string(&config.auditor_signing_key)?;
+        let signal_public_key = std::fs::read_to_string(&config.signal_public_key)
+            .context("Failed to read signal public key")?;
+        let vrf_public_key = std::fs::read_to_string(&config.vrf_public_key)
+            .context("Failed to read VRF public key")?;
+        let auditor_signing_key = std::fs::read_to_string(&config.auditor_signing_key)
+            .context("Failed to read auditor signing key")?;
 
         let auditor_config = PublicConfig {
             mode: DeploymentMode::ThirdPartyAuditing, // Assume third party auditing, since we're an auditor...
-            sig_key: VerifyingKey::from_public_key_pem(&signal_public_key)?,
-            vrf_key: VerifyingKey::from_public_key_pem(&vrf_public_key)?,
+            sig_key: VerifyingKey::from_public_key_pem(&signal_public_key)
+                .context("Failed to parse signal public key")?,
+            vrf_key: VerifyingKey::from_public_key_pem(&vrf_public_key)
+                .context("Failed to parse VRF public key")?,
         };
 
-        let auditor_key = SigningKey::from_pkcs8_pem(&auditor_signing_key)?;
+        let auditor_key = SigningKey::from_pkcs8_pem(&auditor_signing_key)
+            .context("Failed to parse auditor signing key")?;
 
         let auditor = Auditor::new(auditor_config, auditor_key);
 
-        let endpoint = Endpoint::from_shared(config.server_endpoint.clone())?
-            .tls_config(tls_config)?
+        let endpoint = Endpoint::from_shared(config.server_endpoint.clone())
+            .context("Failed to create endpoint")?
+            .tls_config(tls_config)
+            .context("Failed to create TLS config")?
             .timeout(Duration::from_secs(config.request_timeout_seconds));
 
         Ok(Self {
@@ -114,38 +127,61 @@ impl KeyTransparencyClient {
         })
     }
 
+    /// Returns true if there are updates at the given index
+    async fn test_at_index(
+        &self,
+        client: &mut KeyTransparencyServiceClient<Channel>,
+        index: u64,
+    ) -> Result<bool, anyhow::Error> {
+        let response =
+            fetch_audit_entries(&self.config, &mut client.clone(), index, Some(1), false).await;
+        match response {
+            Ok(response) => Ok(!response.updates.is_empty()),
+            Err(status) => {
+                if status.code() == Code::OutOfRange {
+                    Ok(false)
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Failed to fetch audit entries at index {index}: {:?}",
+                        status
+                    ))
+                }
+            }
+        }
+    }
+
     /// Estimate the end of the log by binary search
     pub async fn estimate_log_end(&mut self) -> Result<u64, anyhow::Error> {
-        let transport = self.endpoint.connect().await?;
+        let transport = self
+            .endpoint
+            .connect()
+            .await
+            .context("Failed to connect to server")?;
         let mut client = KeyTransparencyServiceClient::new(transport);
         // Start at known base and keep doubling until we get an empty response
         let mut low = self.transparency_log.size();
         let mut high = 1;
-        while fetch_audit_entries(&self.config, &mut client, high, Some(1), false)
-            .await
-            .is_ok()
-        {
+        while self.test_at_index(&mut client, high).await? {
             high *= 2;
         }
 
         // Now binary search between low and high
         while high - low > 500 {
             let mid = (low + high) / 2;
-            if fetch_audit_entries(&self.config, &mut client, mid, Some(1), false)
-                .await
-                .is_err()
-            {
-                high = mid;
+            if self.test_at_index(&mut client, mid).await? {
+                low = mid;
             } else {
-                low = mid + 1;
+                high = mid + 1;
             }
         }
 
         // Now poll to find the exact end
-        let response =
-            fetch_audit_entries(&self.config, &mut client, low, Some(1000), false).await?;
+        let response = fetch_audit_entries(&self.config, &mut client, low, Some(1000), false)
+            .await
+            .context(format!("Failed to fetch audit entries at index {low}"))?;
         if response.updates.is_empty() {
-            Err(anyhow::anyhow!("Log end not found"))
+            // This should never happen, but we'll handle it just in case
+            Err(anyhow::anyhow!("Log end not found at index {low}"))
         } else {
             Ok(low + response.updates.len() as u64)
         }
@@ -159,14 +195,19 @@ impl KeyTransparencyClient {
         client: &mut KeyTransparencyServiceClient<Channel>,
     ) -> Result<Response<()>, anyhow::Error> {
         let tree_head = self.auditor.sign_head(
-            self.transparency_log.log_root()?,
+            self.transparency_log
+                .log_root()
+                .context("Tried to submit empty log root")?,
             self.transparency_log.size(),
         );
 
-        let mut request = Request::new(tree_head);
+        let mut request = Request::new(tree_head.clone());
         request.set_timeout(Duration::from_secs(self.config.request_timeout_seconds));
 
-        let response = client.set_auditor_head(request).await?;
+        let response = client
+            .set_auditor_head(request)
+            .await
+            .context(format!("Failed to submit auditor head: {tree_head:?}"))?;
         Ok(response)
     }
 
@@ -181,9 +222,17 @@ impl KeyTransparencyClient {
     /// This uses concurrent requests to optimize fetch throughput
     pub async fn run_audit(&mut self) -> Result<(), anyhow::Error> {
         // Estimate the end of the log so we can report progress
-        let initial_log_end = self.estimate_log_end().await?;
+        let initial_log_end = self
+            .estimate_log_end()
+            .await
+            .context("Failed to estimate log end")?;
+        tracing::info!("Estimated log end: {initial_log_end}");
 
-        let transport = self.endpoint.connect().await?;
+        let transport = self
+            .endpoint
+            .connect()
+            .await
+            .context("Failed to connect to server")?;
         let mut client = KeyTransparencyServiceClient::new(transport);
 
         let batch_size = self.config.default_batch_size;
@@ -213,41 +262,63 @@ impl KeyTransparencyClient {
 
         loop {
             // Wait for the next job to complete
-            let response = queue.pop_front().unwrap().await??;
+            let response = queue
+                .pop_front()
+                .unwrap()
+                .await
+                .context("Fetch thread panicked")??;
             for update in &response.updates {
-                self.transparency_log.apply_update(update.clone())?;
+                self.transparency_log
+                    .apply_update(update.clone())
+                    .context(format!("Failed to apply update: {update:?}"))?;
             }
 
-            if last_reported.elapsed().as_secs() > 2 {
+            // Poll interval is a good proxy for progress reporting
+            if last_reported.elapsed().as_secs() > self.config.poll_interval_seconds {
                 let diff = self.transparency_log.size() - progress;
                 progress = self.transparency_log.size();
                 // Report progress, don't use newlines
                 let elapsed = last_reported.elapsed();
                 last_reported = std::time::Instant::now();
                 let rate = diff as f64 / elapsed.as_secs_f64();
-                print!("\r                                                         "); // Clear the line
-                print!("\rProcessing {rate:.2} updates/s");
+
                 if syncing {
-                    print!(
-                        ", {} % synced, {} remaining",
-                        (progress as f64 / initial_log_end as f64 * 100.0).round(),
-                        self.hms((initial_log_end - progress) / rate as u64)
+                    let percent = (progress as f64 / initial_log_end as f64 * 100.0).round();
+                    let remaining =
+                        self.hms((initial_log_end.saturating_sub(progress)) / rate as u64);
+                    tracing::info!(
+                        type = "syncing",
+                        rate = rate,
+                        percent = percent,
+                        remaining = remaining,
+                    );
+                } else {
+                    tracing::info!(
+                        type = "auditing",
+                        rate = rate,
                     );
                 }
-
-                std::io::stdout().flush().unwrap();
             }
 
             if syncing && !response.more {
-                println!("\nLog sync successful!");
+                tracing::info!("\nLog sync successful!");
                 // Drain the queue
-                queue.clear();
+                queue.drain(..).for_each(|job| job.abort());
                 syncing = false
             }
 
             if !syncing {
-                self.storage.commit_head(&self.transparency_log).await?;
-                self.submit_auditor_head(&mut client).await?;
+                self.storage
+                    .commit_head(&self.transparency_log)
+                    .await
+                    .context("Failed to commit log head")?;
+                self.submit_auditor_head(&mut client)
+                    .await
+                    .context("Failed to submit auditor head")?;
+                tracing::info!(type="submit-head", index=self.transparency_log.size());
+            }
+
+            if !response.more {
                 let poll_interval = Duration::from_secs(self.config.poll_interval_seconds);
                 tokio::time::sleep(poll_interval).await;
             }
@@ -266,21 +337,15 @@ pub fn load_config_from_file(path: &PathBuf) -> Result<ClientConfig, anyhow::Err
     Ok(config)
 }
 
-/// Save configuration to a YAML file
-pub fn save_config_to_file(config: &ClientConfig, path: &PathBuf) -> Result<(), anyhow::Error> {
-    let config_content = serde_yaml::to_string(config)?;
-    std::fs::write(path, config_content)?;
-    Ok(())
-}
-
 /// Fetch audit entries starting from the given position
+/// If retry is true, we will retry on failure, and report intermediate errors
 async fn fetch_audit_entries(
     config: &ClientConfig,
     client: &mut KeyTransparencyServiceClient<Channel>,
     start: u64,
     limit: Option<u64>,
-    retry: bool,
-) -> Result<AuditResponse, anyhow::Error> {
+    retry: bool, // If true, we will retry on failure, and report the error
+) -> Result<AuditResponse, Status> {
     let limit = limit.unwrap_or(config.default_batch_size);
 
     let mut retries = if retry { config.max_retries } else { 0 };
@@ -293,16 +358,32 @@ async fn fetch_audit_entries(
             Ok(response) => {
                 return Ok(response.into_inner());
             }
-            Err(err) => {
-                if retries == 0 {
-                    return Err(anyhow::anyhow!(
-                        "Failed to fetch audit entries after {} retries: {err}",
-                        config.max_retries
-                    ));
+            Err(status) => {
+                // Patch up the error code to be more useful
+                let status = if status.code() == Code::InvalidArgument
+                    && status
+                        .message()
+                        .contains("auditing can not start past end of tree")
+                {
+                    Status::new(Code::OutOfRange, status.message())
+                } else {
+                    status
+                };
+
+                if retries > 0 {
+                    if status.code() != Code::OutOfRange {
+                        tracing::warn!(
+                            "Failed to fetch audit entries at index {start}, limit {limit}: {:?}, retries remaining: {}",
+                            status,
+                            retries
+                        );
+                    }
+                    let backoff = 2u64.pow(config.max_retries - retries);
+                    tokio::time::sleep(Duration::from_secs(backoff)).await;
+                    retries -= 1;
+                } else {
+                    return Err(status);
                 }
-                let backoff = 2u64.pow(config.max_retries - retries);
-                tokio::time::sleep(Duration::from_secs(backoff)).await;
-                retries -= 1;
             }
         }
     }

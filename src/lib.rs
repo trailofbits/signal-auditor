@@ -2,10 +2,8 @@
 //! [Signal Key Transparency Log.](https://github.com/signalapp/key-transparency-server)
 
 pub mod auditor;
-pub mod client;
 pub mod log;
 pub mod prefix;
-pub mod storage;
 pub mod transparency;
 /// Protocol buffer definitions for transparency log network messages.
 pub mod proto {

@@ -1,5 +1,5 @@
 use crate::client::ClientConfig;
-use crate::transparency::TransparencyLog;
+use signal_auditor::transparency::TransparencyLog;
 
 // Currently we do not actually use generic storage impls
 // but instead use feature flags to select the storage backend

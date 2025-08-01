@@ -23,6 +23,12 @@ serde_cbor = "0.11.2"
 google-cloud-storage = { version = "0.24.0", optional = true }
 hex = { version = "0.4.3", optional = true }
 serde_bytes = "0.11.17"
+log = "0.4"
+env_logger = "0.11"
+serde_json = "1.0"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["json", "env-filter"] }
+tracing-stackdriver = { version = "0.10.0", optional = true }
 
 
 [build-dependencies]
@@ -34,7 +40,7 @@ aes = "0.8.4"
 hex = "0.4.3"
 hex-literal = "1.0.0"
 lazy_static = "1.5.0"
-criterion = { version = "0.6", features = ["html_reports"] }
+criterion = { version = "0.7", features = ["html_reports"] }
 rand = "0.9.2"
 
 [[bench]]
@@ -46,6 +52,6 @@ inherits = "release"
 debug = true
 
 [features]
-default = ["storage-filestore", "storage-gcp"]
-storage-filestore = []
 storage-gcp = ["google-cloud-storage", "hex"]
+stackdriver = ["tracing-stackdriver"]
+default = ["stackdriver"]

@@ -1,6 +1,6 @@
 use crate::client::ClientConfig;
 use crate::storage::Storage;
-use crate::transparency::TransparencyLog;
+use signal_auditor::transparency::TransparencyLog;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ impl FileBackend {
     pub fn new(path: &Path) -> Result<Self, anyhow::Error> {
         // Create the directory if it doesn't exist
         std::fs::create_dir_all(path.parent().unwrap())?;
-        println!("Using file storage: {}", path.display());
+        tracing::info!("Using file storage: {}", path.display());
         Ok(Self {
             path: path.to_path_buf(),
         })
@@ -23,7 +23,7 @@ impl FileBackend {
 impl Storage for FileBackend {
     async fn init_from_config(config: &ClientConfig) -> Result<Self, anyhow::Error> {
         Self::new(
-            &config
+            config
                 .storage_path
                 .as_ref()
                 .ok_or(anyhow::anyhow!("Storage path not set"))?,

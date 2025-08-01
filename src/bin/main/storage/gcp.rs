@@ -3,12 +3,12 @@
 
 use crate::client::ClientConfig;
 use crate::storage::Storage;
-use crate::transparency::TransparencyLog;
 use google_cloud_storage::client::{Client, ClientConfig as GcpClientConfig};
 use google_cloud_storage::http::objects::download::Range;
 use google_cloud_storage::http::objects::get::GetObjectRequest;
 use google_cloud_storage::http::objects::list::ListObjectsRequest;
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
+use signal_auditor::transparency::TransparencyLog;
 
 use hex::ToHex;
 
@@ -43,7 +43,7 @@ impl Storage for GcpBackend {
             .gcp_bucket
             .as_ref()
             .ok_or(anyhow::anyhow!("GCP bucket not set"))?;
-        println!("Using GCP storage bucket {bucket}");
+        tracing::info!("Using GCP storage bucket {bucket}");
         Self::new(bucket)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize GCP storage: {}", e))

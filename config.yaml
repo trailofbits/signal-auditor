@@ -24,7 +24,7 @@ client_key_path: "certs/tob_staging_client.key"
 default_batch_size: 1000
 
 # Maximum number of retries for failed requests
-max_retries: 3
+max_retries: 8
 
 # Timeout for requests in seconds
 request_timeout_seconds: 30
@@ -41,7 +41,7 @@ vrf_public_key: "certs/staging_vrf_public_key.crt"
 auditor_signing_key: "certs/tob_staging_eddsa.pem"
 
 # Steady-state (post-sync) poll interval in seconds
-poll_interval_seconds: 5 # 5 minutes
+poll_interval_seconds: 1
 
 # File-based log cache storage
 storage_path: "data/staging.bin"
