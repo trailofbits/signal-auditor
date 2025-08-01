@@ -7,7 +7,6 @@ pub mod log;
 pub mod prefix;
 pub mod storage;
 pub mod transparency;
-
 /// Protocol buffer definitions for transparency log network messages.
 pub mod proto {
     pub mod transparency {

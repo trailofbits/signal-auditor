@@ -41,7 +41,7 @@ vrf_public_key: "certs/staging_vrf_public_key.crt"
 auditor_signing_key: "certs/tob_staging_eddsa.pem"
 
 # Steady-state (post-sync) poll interval in seconds
-poll_interval_seconds: 300 # 5 minutes
+poll_interval_seconds: 5 # 5 minutes
 
 # File-based log cache storage
 storage_path: "data/staging.bin"

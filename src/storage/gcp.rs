@@ -67,53 +67,20 @@ impl Storage for GcpBackend {
                 &upload_type,
             )
             .await?;
-
-        // Write current head path to a file `head`
-        let upload_type = UploadType::Simple(Media::new("head"));
-        self.client
-            .upload_object(
-                &UploadObjectRequest {
-                    bucket: self.bucket.clone(),
-                    ..Default::default()
-                },
-                path,
-                &upload_type,
-            )
-            .await?;
-
         Ok(())
     }
 
-    // Gets head from most recent file by lexicographic order
+    // Gets head from most recent object by lexicographic order
     async fn get_head(&self) -> Result<Option<TransparencyLog>, anyhow::Error> {
-        // Fetch the head file
-        let head_path = self
-            .client
-            .download_object(
-                &GetObjectRequest {
-                    bucket: self.bucket.clone(),
-                    object: "head".to_string(),
-                    ..Default::default()
-                },
-                &Range::default(),
-            )
-            .await?;
-        let head_path = String::from_utf8(head_path)?;
-        println!("Head path: {head_path}");
-
         let mut objects = self
             .client
             .list_objects(&ListObjectsRequest {
                 bucket: self.bucket.clone(),
-                start_offset: Some(head_path),
                 ..Default::default()
             })
             .await?;
 
         while objects.next_page_token.is_some() {
-            // Fetch all objects lexicographically greater than the claimed head
-            // Head index is just informative - we don't trust it to point to
-            // the most recent object.
             objects = self
                 .client
                 .list_objects(&ListObjectsRequest {
