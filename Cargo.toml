@@ -54,4 +54,4 @@ debug = true
 [features]
 storage-gcp = ["google-cloud-storage", "hex"]
 stackdriver = ["tracing-stackdriver"]
-default = ["stackdriver"]
+gcp = ["stackdriver", "storage-gcp"]
