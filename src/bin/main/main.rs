@@ -1,7 +1,7 @@
+use anyhow::Context;
 use std::{path::PathBuf, time::Duration};
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
-use anyhow::Context;
 
 mod client;
 use client::{KeyTransparencyClient, load_config_from_file};
@@ -9,17 +9,15 @@ use client::{KeyTransparencyClient, load_config_from_file};
 mod storage;
 
 #[cfg(feature = "stackdriver")]
-const GCP_ERROR_TYPE: &str = "type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent";
+const GCP_ERROR_TYPE: &str =
+    "type.googleapis.com/google.devtools.clouderrorreporting.v1beta1.ReportedErrorEvent";
 
 macro_rules! gcp_error {
     ($message:expr) => {
         #[cfg(feature = "stackdriver")]
-        error!(
-            "@type"=GCP_ERROR_TYPE,
-            message=$message,
-        );
+        error!("@type" = GCP_ERROR_TYPE, message = $message,);
         #[cfg(not(feature = "stackdriver"))]
-        error!(message=$message);
+        error!(message = $message);
     };
 }
 
@@ -31,7 +29,6 @@ async fn main() {
         gcp_error!(format!("Error running audit: {e:?}"));
     }
 }
-
 
 async fn run() -> Result<(), anyhow::Error> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
