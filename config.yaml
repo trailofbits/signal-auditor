@@ -1,0 +1,55 @@
+# Key Transparency Auditor Client Configuration
+# This file configures the client for connecting to a Key Transparency service
+
+# The server endpoint to connect to (e.g., "https://example.com:443")
+server_endpoint: "https://audit.kt.staging.signal.org"
+
+# TODO: Load client mTLS secrets from KMS
+# These can be safely modified by regular IAM perms
+
+# Path to the client certificate file (PEM format)
+# This certificate is used for mTLS authentication
+client_cert_path: "certs/tob_staging_client.crt"
+
+# Path to the client private key file (PEM format)
+# This private key corresponds to the client certificate
+client_key_path: "certs/tob_staging_client.key"
+
+# Path to the CA certificate file (PEM format) for server verification
+# Only needed if the server is not using a CA trusted by system roots
+# Disables system roots when present
+# ca_cert_path: "certs/ca.crt"
+
+# Default batch size for audit requests
+default_batch_size: 1000
+
+# Maximum number of retries for failed requests
+max_retries: 8
+
+# Timeout for requests in seconds
+request_timeout_seconds: 30
+
+# TODO: Load keys from KMS
+
+# Signal signing public key (PEM Ed25519)
+signal_public_key: "certs/staging_signing_public_key.crt"
+
+# Signal VRF public key (PEM Ed25519)
+vrf_public_key: "certs/staging_vrf_public_key.crt"
+
+# Auditor Signing Key (PEM E25519 pkcs8 private key)
+auditor_signing_key: "certs/tob_staging_eddsa.pem"
+
+# Steady-state (post-sync) poll interval in seconds
+poll_interval_seconds: 1800
+
+# Interval to log progress during sync (seconds)
+sync_progress_interval: 60
+
+# File-based log cache storage
+storage_path: "data/staging.bin"
+
+# Maximum number of concurrent requests to queue during sync
+max_concurrent_requests: 2
+
+gcp_bucket: tob-dev-signal-kt

@@ -5,13 +5,12 @@ use signal_auditor::auditor::{Auditor, PublicConfig};
 
 use ed25519_dalek::{SigningKey, VerifyingKey, pkcs8::DecodePublicKey};
 
-use signal_auditor::proto as transparency;
+use signal_auditor::proto::transparency;
 
 mod test_vectors {
     include!(concat!(env!("OUT_DIR"), "/test_vectors.rs"));
 }
 
-use generic_array::GenericArray;
 use prost::Message;
 use signal_auditor::transparency::TransparencyLog;
 use test_vectors::TestVectors;
@@ -29,12 +28,12 @@ fn test_should_succeed() {
     let should_succeed = VECTORS.should_succeed.clone().unwrap();
     for vector in should_succeed.updates.into_iter() {
         let update = vector.update.unwrap();
-        let expected_root = GenericArray::clone_from_slice(&vector.log_root);
+        let expected_root = vector.log_root;
 
-        println!("Applying update: {:x?}", update);
+        println!("Applying update: {update:x?}");
 
         log.apply_update(update).unwrap();
-        assert_eq!(log.log_root().unwrap(), expected_root);
+        assert_eq!(log.log_root().unwrap().to_vec(), expected_root);
     }
 }
 
@@ -46,13 +45,13 @@ fn test_should_fail() {
         let description = vector.description;
         let mut result = Ok(());
         for update in vector.updates.into_iter() {
-            println!("Applying update: {:x?}", update);
+            println!("Applying update: {update:x?}");
 
             result = log.apply_update(update);
         }
 
         // TODO - assert particular errors
-        assert!(result.is_err(), "Expected error {}", description);
+        assert!(result.is_err(), "Expected error {description}");
     }
 }
 
@@ -69,7 +68,7 @@ fn test_signatures() {
 
     let auditor = Auditor::new(config, key);
 
-    let head = GenericArray::clone_from_slice(&vector.root);
-    let sig = auditor.sign_at_time(head, vector.tree_size, vector.timestamp as u64);
-    assert_eq!(sig, vector.signature);
+    let head = vector.root.try_into().unwrap();
+    let sig = auditor.sign_at_time(head, vector.tree_size, vector.timestamp);
+    assert_eq!(sig.signature, vector.signature);
 }

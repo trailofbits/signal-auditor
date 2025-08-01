@@ -1,8 +1,15 @@
 use std::io::Result;
 fn main() -> Result<()> {
-    prost_build::compile_protos(
-        &["proto/transparency.proto", "proto/vectors.proto"],
-        &["proto/"],
-    )?;
+    tonic_build::configure()
+        .build_server(false)
+        .compile_protos(
+            &[
+                "proto/transparency.proto",
+                "proto/vectors.proto",
+                "proto/key_transparency.proto",
+            ],
+            &["proto/"],
+        )?;
+
     Ok(())
 }

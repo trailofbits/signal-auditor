@@ -1,11 +1,13 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ed25519_dalek::SigningKey;
-use rand::{rngs::OsRng, Rng, TryRngCore};
+use rand::{TryRngCore, rngs::OsRng};
+use signal_auditor::proto::transparency;
 use signal_auditor::{
     auditor::{Auditor, DeploymentMode, PublicConfig},
     transparency::TransparencyLog,
 };
 use std::fs;
+use std::hint::black_box;
 
 mod test_vectors {
     include!(concat!(env!("OUT_DIR"), "/test_vectors.rs"));
