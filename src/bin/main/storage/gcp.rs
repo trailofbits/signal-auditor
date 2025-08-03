@@ -8,7 +8,7 @@
 //! the image measurement used to gate the auditor signing key
 
 use crate::client::ClientConfig;
-use crate::storage::Storage;
+use crate::storage::{deserialize_head, serialize_head, MacKey, Storage};
 use google_cloud_storage::client::{Client, ClientConfig as GcpClientConfig};
 use google_cloud_storage::http::objects::download::Range;
 use google_cloud_storage::http::objects::get::GetObjectRequest;
@@ -21,6 +21,7 @@ use hex::ToHex;
 pub struct GcpBackend {
     bucket: String,
     client: Client,
+    mac_key: MacKey,
 }
 
 
@@ -35,25 +36,26 @@ fn get_head_path(head: &TransparencyLog) -> Result<String, anyhow::Error> {
 }
 
 impl GcpBackend {
-    pub async fn new(bucket: &str) -> Result<Self, anyhow::Error> {
+    pub async fn new(bucket: &str, mac_key: MacKey) -> Result<Self, anyhow::Error> {
         let config = GcpClientConfig::default().with_auth().await?;
         let client = Client::new(config);
 
         Ok(Self {
             bucket: bucket.to_string(),
             client,
+            mac_key,
         })
     }
 }
 
 impl Storage for GcpBackend {
-    async fn init_from_config(config: &ClientConfig) -> Result<Self, anyhow::Error> {
+    async fn init_from_config(config: &ClientConfig, mac_key: MacKey) -> Result<Self, anyhow::Error> {
         let bucket = config
             .gcp_bucket
             .as_ref()
             .ok_or(anyhow::anyhow!("GCP bucket not set"))?;
         tracing::info!("Using GCP storage bucket {bucket}");
-        Self::new(bucket)
+        Self::new(bucket, mac_key)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize GCP storage: {}", e))
     }
@@ -61,7 +63,7 @@ impl Storage for GcpBackend {
     // Commits head to a file `head_{size}_{log_root_hash}`
     // then updates `head` to point to the new file
     async fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error> {
-        let serialized = serde_cbor::ser::to_vec_packed(head)?;
+        let serialized = serialize_head(&self.mac_key, head)?;
 
         let path = get_head_path(head)?;
         let upload_type = UploadType::Simple(Media::new(path.clone()));
@@ -119,7 +121,7 @@ impl Storage for GcpBackend {
                 &Range::default(),
             )
             .await?;
-        let head: TransparencyLog = serde_cbor::from_slice(&head_file_data)?;
+        let head = deserialize_head(&self.mac_key, &head_file_data)?;
 
         // For now, verify consistency with the object name
         // TODO - verify a signature over the data

@@ -43,6 +43,8 @@ pub struct ClientConfig {
     pub vrf_public_key: PathBuf,
     /// Auditor signing key
     pub auditor_signing_key: PathBuf,
+    /// Auditor storage MAC key. TODO: Derive signing and mac from a single seed
+    pub auditor_mac_key: PathBuf,
     /// Poll interval for audit seconds
     pub poll_interval_seconds: u64,
     /// Maximum number of concurrent requests to queue
@@ -87,7 +89,12 @@ impl KeyTransparencyClient {
             tls_config = tls_config.with_enabled_roots();
         }
 
-        let storage = Backend::init_from_config(&config)
+        let mac_key = std::fs::read(&config.auditor_mac_key)
+            .context("Failed to read auditor MAC key")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("MAC key must be 32 bytes"))?;
+
+        let storage = Backend::init_from_config(&config, mac_key)
             .await
             .context("Failed to initialize storage backend")?;
 

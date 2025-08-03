@@ -40,6 +40,9 @@ vrf_public_key: "certs/staging_vrf_public_key.crt"
 # Auditor Signing Key (PEM E25519 pkcs8 private key)
 auditor_signing_key: "certs/tob_staging_eddsa.pem"
 
+# Auditor storage MAC key
+auditor_mac_key: "certs/tob_mac.bin"
+
 # Steady-state (post-sync) poll interval in seconds
 poll_interval_seconds: 1800
 
