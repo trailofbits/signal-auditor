@@ -1,3 +1,10 @@
+//! A trait for storage backends.
+//! 
+//! Currently we do not actually use generic storage impls
+//! but instead use feature flags to select a single storage backend
+//! 
+//! TODO - sign stored data to ensure integrity
+
 use crate::client::ClientConfig;
 use signal_auditor::transparency::TransparencyLog;
 
@@ -19,15 +26,11 @@ pub trait Storage: Sized {
     /// Initialize the storage from a config
     async fn init_from_config(config: &ClientConfig) -> Result<Self, anyhow::Error>;
 
-    // Commit a log head to storage
+    /// Commit a log head to storage
     async fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error>;
 
     /// Get the log head from storage, if it exists
     /// Returns None if the storage is not initialized
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if an OS error occurs or the log data is invalid
     async fn get_head(&self) -> Result<Option<TransparencyLog>, anyhow::Error>;
 }
 

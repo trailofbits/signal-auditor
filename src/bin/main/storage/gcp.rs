@@ -1,5 +1,11 @@
-// TODO - consider generic S3 backend + custom auth
-// TODO - sign the stored data
+//! A storage backend using a GCP bucket
+//! The intended usage is to enforce a retention lock on the bucket
+//! Because the client always uses the lexicographically latest file in
+//! the bucket, it will not be tricked into starting from an old head and
+//! potentially equivocating on the log root.
+//! 
+//! In order for this technique to be effective, the bucket name must be included in
+//! the image measurement used to gate the auditor signing key
 
 use crate::client::ClientConfig;
 use crate::storage::Storage;
@@ -9,14 +15,17 @@ use google_cloud_storage::http::objects::get::GetObjectRequest;
 use google_cloud_storage::http::objects::list::ListObjectsRequest;
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
 use signal_auditor::transparency::TransparencyLog;
-
 use hex::ToHex;
 
+/// A storage backend using a GCP bucket
 pub struct GcpBackend {
     bucket: String,
     client: Client,
 }
 
+
+/// Format head path as `head_{size}_{log_root_hash}`
+/// where `size` is a 16-character hex string and `log_root_hash` is a 64-character hex string
 fn get_head_path(head: &TransparencyLog) -> Result<String, anyhow::Error> {
     Ok(format!(
         "head_{:016x}_{}",
