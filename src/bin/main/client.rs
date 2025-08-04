@@ -1,3 +1,5 @@
+//! This module contains the primary event loop for the auditor.
+
 use anyhow::Context;
 use ed25519_dalek::{
     SigningKey, VerifyingKey,
@@ -18,6 +20,7 @@ use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity
 
 use crate::storage::{Backend, Storage};
 
+/// Configuration for the Key Transparency client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
     /// The server endpoint to connect to (e.g., "https://example.com:443")
@@ -40,10 +43,14 @@ pub struct ClientConfig {
     pub vrf_public_key: PathBuf,
     /// Auditor signing key
     pub auditor_signing_key: PathBuf,
+    /// Auditor storage MAC key. TODO: Derive signing and mac from a single seed
+    pub auditor_mac_key: PathBuf,
     /// Poll interval for audit seconds
     pub poll_interval_seconds: u64,
     /// Maximum number of concurrent requests to queue
     pub max_concurrent_requests: usize,
+    /// Interval in seconds between sync reports
+    pub sync_progress_interval: u64,
 
     /// GCP bucket name
     #[cfg(feature = "storage-gcp")]
@@ -54,12 +61,16 @@ pub struct ClientConfig {
     pub storage_path: Option<PathBuf>,
 }
 
+/// A stateful Auditor client for the Key Transparency service
+/// Consists of a transparency log cache, a storage backend,
+/// and an auditor key.
 pub struct KeyTransparencyClient {
     endpoint: Endpoint,
     config: ClientConfig,
     transparency_log: TransparencyLog,
     storage: Backend,
-    auditor: Auditor, // holds the key material for the auditor
+    /// Auditor key material
+    auditor: Auditor,
 }
 
 impl KeyTransparencyClient {
@@ -78,7 +89,12 @@ impl KeyTransparencyClient {
             tls_config = tls_config.with_enabled_roots();
         }
 
-        let storage = Backend::init_from_config(&config)
+        let mac_key = std::fs::read(&config.auditor_mac_key)
+            .context("Failed to read auditor MAC key")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("MAC key must be 32 bytes"))?;
+
+        let storage = Backend::init_from_config(&config, mac_key)
             .await
             .context("Failed to initialize storage backend")?;
 
@@ -128,6 +144,7 @@ impl KeyTransparencyClient {
     }
 
     /// Returns true if there are updates at the given index
+    /// i.e. the log has size at least `index`
     async fn test_at_index(
         &self,
         client: &mut KeyTransparencyServiceClient<Channel>,
@@ -151,6 +168,7 @@ impl KeyTransparencyClient {
     }
 
     /// Estimate the end of the log by binary search
+    /// TODO: see if we can get a dedicated endpoint for this
     pub async fn estimate_log_end(&mut self) -> Result<u64, anyhow::Error> {
         let transport = self
             .endpoint
@@ -211,6 +229,7 @@ impl KeyTransparencyClient {
         Ok(response)
     }
 
+    /// Format a duration in hours, minutes, and seconds
     fn hms(&self, seconds: u64) -> String {
         let hours = seconds / 3600;
         let minutes = (seconds % 3600) / 60;
@@ -218,8 +237,8 @@ impl KeyTransparencyClient {
         format!("{hours:02}:{minutes:02}:{secs:02}")
     }
 
-    /// Run the initial sync to catch up with the log head
-    /// This uses concurrent requests to optimize fetch throughput
+    /// Run the client event loop
+    /// This function does not return unless an error occurs
     pub async fn run_audit(&mut self) -> Result<(), anyhow::Error> {
         // Estimate the end of the log so we can report progress
         let initial_log_end = self
@@ -228,6 +247,7 @@ impl KeyTransparencyClient {
             .context("Failed to estimate log end")?;
         tracing::info!("Estimated log end: {initial_log_end}");
 
+        // Connect to the server
         let transport = self
             .endpoint
             .connect()
@@ -241,9 +261,13 @@ impl KeyTransparencyClient {
         let mut progress = self.transparency_log.size();
         let mut last_reported = std::time::Instant::now();
 
-        // Are we currently in the inital catch-up sync?
+        // Are we currently in the initial catch-up sync?
         let mut syncing = true;
 
+        // Pre-fetch batches in parallel, since fetch latency is the
+        // primary bottleneck during sync. During sync the queue contains
+        // `max_concurrent_requests` jobs.
+        // During steady-state operation, the queue contains one job.
         let config = self.config.clone();
         let fetch_client = client.clone();
         let fetch_job = |start_index| {
@@ -253,61 +277,62 @@ impl KeyTransparencyClient {
                 fetch_audit_entries(&config, &mut client, start_index, Some(batch_size), true).await
             }
         };
-
         let mut queue = VecDeque::new();
         for i in 0..self.config.max_concurrent_requests as u64 {
             let start_index = progress + batch_size * i;
             queue.push_back(tokio::spawn(fetch_job(start_index)))
         }
 
+        // Main event loop
+        // Does not exit unless an error occurs
         loop {
-            // Wait for the next job to complete
+            // Wait for the next fetch to complete
             let response = queue
                 .pop_front()
                 .unwrap()
                 .await
                 .context("Fetch thread panicked")??;
+
+            // Apply the updates to the log
             for update in &response.updates {
                 self.transparency_log
                     .apply_update(update.clone())
                     .context(format!("Failed to apply update: {update:?}"))?;
             }
 
-            // Poll interval is a good proxy for progress reporting
-            if last_reported.elapsed().as_secs() > self.config.poll_interval_seconds {
+            // Report progress if we are syncing
+            if syncing && last_reported.elapsed().as_secs() > self.config.sync_progress_interval {
                 let diff = self.transparency_log.size() - progress;
                 progress = self.transparency_log.size();
                 // Report progress, don't use newlines
                 let elapsed = last_reported.elapsed();
                 last_reported = std::time::Instant::now();
                 let rate = diff as f64 / elapsed.as_secs_f64();
+                let percent = (progress as f64 / initial_log_end as f64 * 100.0).round();
+                let remaining =
+                    self.hms((initial_log_end.saturating_sub(progress)) / rate as u64);
+                tracing::info!(
+                    type = "syncing",
+                    rate = rate,
+                    percent = percent,
+                    remaining = remaining,
+                );
+            }
 
+            // TODO: consider submitting heads at a fixed interval (in number of updates)
+            // so that if we are falling behind, we can still make some progress
+
+            // If we have reached the end of the log, we need to submit a head
+            if !response.more {
                 if syncing {
-                    let percent = (progress as f64 / initial_log_end as f64 * 100.0).round();
-                    let remaining =
-                        self.hms((initial_log_end.saturating_sub(progress)) / rate as u64);
-                    tracing::info!(
-                        type = "syncing",
-                        rate = rate,
-                        percent = percent,
-                        remaining = remaining,
-                    );
-                } else {
-                    tracing::info!(
-                        type = "auditing",
-                        rate = rate,
-                    );
+                    tracing::info!("\nLog sync successful!");
+                    // Drain the queue of pending fetches
+                    // to reduce concurrency down to 1
+                    queue.drain(..).for_each(|job| job.abort());
+                    syncing = false
                 }
-            }
 
-            if syncing && !response.more {
-                tracing::info!("\nLog sync successful!");
-                // Drain the queue
-                queue.drain(..).for_each(|job| job.abort());
-                syncing = false
-            }
-
-            if !syncing {
+                // Always commit the head to storage before submitting
                 self.storage
                     .commit_head(&self.transparency_log)
                     .await
@@ -315,10 +340,11 @@ impl KeyTransparencyClient {
                 self.submit_auditor_head(&mut client)
                     .await
                     .context("Failed to submit auditor head")?;
-                tracing::info!(type="submit-head", index=self.transparency_log.size());
-            }
 
-            if !response.more {
+                // Log the submission; this serves as the primary health metric
+                tracing::info!(type="submit-head", index=self.transparency_log.size());
+
+                // Wait for the entries to start filling up again
                 let poll_interval = Duration::from_secs(self.config.poll_interval_seconds);
                 tokio::time::sleep(poll_interval).await;
             }
@@ -344,22 +370,27 @@ async fn fetch_audit_entries(
     client: &mut KeyTransparencyServiceClient<Channel>,
     start: u64,
     limit: Option<u64>,
-    retry: bool, // If true, we will retry on failure, and report the error
+    // If true, we will retry on failure, and report the error
+    // False is used for head estimation
+    retry: bool,
 ) -> Result<AuditResponse, Status> {
     let limit = limit.unwrap_or(config.default_batch_size);
 
     let mut retries = if retry { config.max_retries } else { 0 };
 
     loop {
+        // Make the request
         let mut request = Request::new(AuditRequest { start, limit });
         request.set_timeout(Duration::from_secs(config.request_timeout_seconds));
         let result = client.audit(request).await;
+    
         match result {
             Ok(response) => {
                 return Ok(response.into_inner());
             }
             Err(status) => {
                 // Patch up the error code to be more useful
+                // TODO: request fix for this upstream
                 let status = if status.code() == Code::InvalidArgument
                     && status
                         .message()
@@ -378,10 +409,12 @@ async fn fetch_audit_entries(
                             retries
                         );
                     }
+                    // Exponential backoff (2^retries)
                     let backoff = 2u64.pow(config.max_retries - retries);
                     tokio::time::sleep(Duration::from_secs(backoff)).await;
                     retries -= 1;
                 } else {
+                    // No more retries, return the error
                     return Err(status);
                 }
             }

@@ -29,6 +29,7 @@ serde_json = "1.0"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["json", "env-filter"] }
 tracing-stackdriver = { version = "0.10.0", optional = true }
+hmac = "0.12.1"
 
 
 [build-dependencies]
@@ -55,3 +56,4 @@ debug = true
 storage-gcp = ["google-cloud-storage", "hex"]
 stackdriver = ["tracing-stackdriver"]
 gcp = ["stackdriver", "storage-gcp"]
+default = []
