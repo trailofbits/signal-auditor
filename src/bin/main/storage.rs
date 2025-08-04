@@ -61,11 +61,7 @@ fn serialize_head(mac_key: &MacKey, head: &TransparencyLog) -> Result<Vec<u8>, a
 
 /// Deserialize a log head from a byte vector, and verify the MAC
 fn deserialize_head(mac_key: &MacKey, head: &[u8]) -> Result<TransparencyLog, anyhow::Error> {
-    // Temporary hack to convert to new format
-    #[cfg(feature = "dummy-mac")]
-    return Ok(serde_cbor::from_slice(head)?);
-
-    let stored_head: StoredHead = serde_cbor::from_slice(&head)?;
+    let stored_head: StoredHead = serde_cbor::from_slice(head)?;
     let mut mac = Hmac::<Sha256>::new_from_slice(mac_key).unwrap();
     mac.update(&stored_head.log_cache);
     mac.verify_slice(&stored_head.mac)?;

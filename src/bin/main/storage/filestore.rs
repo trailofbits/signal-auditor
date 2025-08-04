@@ -8,7 +8,7 @@ use crate::client::ClientConfig;
 use crate::storage::{serialize_head, deserialize_head, MacKey, Storage};
 use signal_auditor::transparency::TransparencyLog;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 pub struct FileBackend {
@@ -54,8 +54,10 @@ impl Storage for FileBackend {
             return Ok(None);
         }
 
-        let file = File::open(&self.path)?;
-        let log_head = deserialize_head(&self.mac_key, &file)?;
+        let mut file = File::open(&self.path)?;
+        let mut file_data = Vec::new();
+        file.read_to_end(&mut file_data)?;
+        let log_head = deserialize_head(&self.mac_key, &file_data)?;
         Ok(Some(log_head)) // TODO - return error if the log is invalid
     }
 }

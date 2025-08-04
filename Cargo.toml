@@ -56,5 +56,4 @@ debug = true
 storage-gcp = ["google-cloud-storage", "hex"]
 stackdriver = ["tracing-stackdriver"]
 gcp = ["stackdriver", "storage-gcp"]
-default = ["gcp"]
-dummy-mac = []
+default = []
