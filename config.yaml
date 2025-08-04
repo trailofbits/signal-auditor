@@ -2,7 +2,6 @@
 # This file configures the client for connecting to a Key Transparency service
 
 # The server endpoint to connect to (e.g., "https://example.com:443")
-server_endpoint: "https://audit.kt.staging.signal.org"
 
 # TODO: Load client mTLS secrets from KMS
 # These can be safely modified by regular IAM perms

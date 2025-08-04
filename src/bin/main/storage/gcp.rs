@@ -3,19 +3,19 @@
 //! Because the client always uses the lexicographically latest file in
 //! the bucket, it will not be tricked into starting from an old head and
 //! potentially equivocating on the log root.
-//! 
+//!
 //! In order for this technique to be effective, the bucket name must be included in
 //! the image measurement used to gate the auditor signing key
 
 use crate::client::ClientConfig;
-use crate::storage::{deserialize_head, serialize_head, MacKey, Storage};
+use crate::storage::{MacKey, Storage, deserialize_head, serialize_head};
 use google_cloud_storage::client::{Client, ClientConfig as GcpClientConfig};
 use google_cloud_storage::http::objects::download::Range;
 use google_cloud_storage::http::objects::get::GetObjectRequest;
 use google_cloud_storage::http::objects::list::ListObjectsRequest;
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
-use signal_auditor::transparency::TransparencyLog;
 use hex::ToHex;
+use signal_auditor::transparency::TransparencyLog;
 
 /// A storage backend using a GCP bucket
 pub struct GcpBackend {
@@ -23,7 +23,6 @@ pub struct GcpBackend {
     client: Client,
     mac_key: MacKey,
 }
-
 
 /// Format head path as `head_{size}_{log_root_hash}`
 /// where `size` is a 16-character hex string and `log_root_hash` is a 64-character hex string
@@ -49,7 +48,10 @@ impl GcpBackend {
 }
 
 impl Storage for GcpBackend {
-    async fn init_from_config(config: &ClientConfig, mac_key: MacKey) -> Result<Self, anyhow::Error> {
+    async fn init_from_config(
+        config: &ClientConfig,
+        mac_key: MacKey,
+    ) -> Result<Self, anyhow::Error> {
         let bucket = config
             .gcp_bucket
             .as_ref()

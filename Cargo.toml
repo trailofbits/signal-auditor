@@ -17,6 +17,7 @@ prost = "0.13"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "fs"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
+config = "0.15.3"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0.98"
 serde_cbor = "0.11.2"
