@@ -6,9 +6,14 @@ use ed25519_dalek::{
     SigningKey, VerifyingKey,
     pkcs8::{DecodePrivateKey, DecodePublicKey},
 };
+use sha2::Sha256;
+use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use std::{collections::VecDeque, path::{Path, PathBuf}};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+};
 use tonic::{Code, Request, Response, Status};
 
 use signal_auditor::auditor::DeploymentMode;
@@ -44,8 +49,6 @@ pub struct ClientConfig {
     pub vrf_public_key: PathBuf,
     /// Auditor signing key
     pub auditor_signing_key: PathBuf,
-    /// Auditor storage MAC key. TODO: Derive signing and mac from a single seed
-    pub auditor_mac_key: PathBuf,
     /// Poll interval for audit seconds
     pub poll_interval_seconds: u64,
     /// Maximum number of concurrent requests to queue
@@ -90,24 +93,6 @@ impl KeyTransparencyClient {
             tls_config = tls_config.with_enabled_roots();
         }
 
-        let mac_key = std::fs::read(&config.auditor_mac_key)
-            .context("Failed to read auditor MAC key")?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("MAC key must be 32 bytes"))?;
-
-        let storage = Backend::init_from_config(&config, mac_key)
-            .await
-            .context("Failed to initialize storage backend")?;
-
-        let transparency_log = storage
-            .get_head()
-            .await
-            .context("Error trying to get log head")?
-            .unwrap_or_else(|| {
-                tracing::info!("No log head found, creating new log");
-                TransparencyLog::new()
-            });
-
         // Read auditor settings
         let signal_public_key = std::fs::read_to_string(&config.signal_public_key)
             .context("Failed to read signal public key")?;
@@ -127,7 +112,25 @@ impl KeyTransparencyClient {
         let auditor_key = SigningKey::from_pkcs8_pem(&auditor_signing_key)
             .context("Failed to parse auditor signing key")?;
 
-        let auditor = Auditor::new(auditor_config, auditor_key);
+        let auditor = Auditor::new(auditor_config, auditor_key.clone());
+
+        // TODO - derive mac key and signing key from a single seed
+        let hkdf = Hkdf::<Sha256>::new(None, &auditor_key.to_bytes());
+        let mut mac_key = [0u8; 32];
+        hkdf.expand(b"auditor-mac-key", &mut mac_key).map_err(|_| anyhow::anyhow!("Failed to expand HKDF"))?;
+
+        let storage = Backend::init_from_config(&config, mac_key)
+            .await
+            .context("Failed to initialize storage backend")?;
+
+        let transparency_log = storage
+            .get_head()
+            .await
+            .context("Error trying to get log head")?
+            .unwrap_or_else(|| {
+                tracing::info!("No log head found, creating new log");
+                TransparencyLog::new()
+            });
 
         let endpoint = Endpoint::from_shared(config.server_endpoint.clone())
             .context("Failed to create endpoint")?

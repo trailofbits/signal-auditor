@@ -2,6 +2,7 @@
 # This file configures the client for connecting to a Key Transparency service
 
 # The server endpoint to connect to (e.g., "https://example.com:443")
+server_endpoint: "https://audit.kt.staging.signal.org"
 
 # TODO: Load client mTLS secrets from KMS
 # These can be safely modified by regular IAM perms
@@ -38,9 +39,6 @@ vrf_public_key: "certs/staging_vrf_public_key.crt"
 
 # Auditor Signing Key (PEM E25519 pkcs8 private key)
 auditor_signing_key: "certs/tob_staging_eddsa.pem"
-
-# Auditor storage MAC key
-auditor_mac_key: "certs/tob_mac.bin"
 
 # Steady-state (post-sync) poll interval in seconds
 poll_interval_seconds: 1800
