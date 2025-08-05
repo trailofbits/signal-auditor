@@ -5,7 +5,7 @@
 //! No special care is taken to ensure that the file is not corrupted
 
 use crate::client::ClientConfig;
-use crate::storage::{serialize_head, deserialize_head, MacKey, Storage};
+use crate::storage::{MacKey, Storage, deserialize_head, serialize_head};
 use signal_auditor::transparency::TransparencyLog;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -29,7 +29,10 @@ impl FileBackend {
 }
 
 impl Storage for FileBackend {
-    async fn init_from_config(config: &ClientConfig, mac_key: MacKey) -> Result<Self, anyhow::Error> {
+    async fn init_from_config(
+        config: &ClientConfig,
+        mac_key: MacKey,
+    ) -> Result<Self, anyhow::Error> {
         Self::new(
             config
                 .storage_path

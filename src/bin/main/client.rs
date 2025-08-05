@@ -1,13 +1,19 @@
 //! This module contains the primary event loop for the auditor.
 
 use anyhow::Context;
+use config::{Config, Environment, File};
 use ed25519_dalek::{
     SigningKey, VerifyingKey,
     pkcs8::{DecodePrivateKey, DecodePublicKey},
 };
+use sha2::Sha256;
+use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use std::{collections::VecDeque, path::PathBuf};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+};
 use tonic::{Code, Request, Response, Status};
 
 use signal_auditor::auditor::DeploymentMode;
@@ -43,8 +49,6 @@ pub struct ClientConfig {
     pub vrf_public_key: PathBuf,
     /// Auditor signing key
     pub auditor_signing_key: PathBuf,
-    /// Auditor storage MAC key. TODO: Derive signing and mac from a single seed
-    pub auditor_mac_key: PathBuf,
     /// Poll interval for audit seconds
     pub poll_interval_seconds: u64,
     /// Maximum number of concurrent requests to queue
@@ -89,24 +93,6 @@ impl KeyTransparencyClient {
             tls_config = tls_config.with_enabled_roots();
         }
 
-        let mac_key = std::fs::read(&config.auditor_mac_key)
-            .context("Failed to read auditor MAC key")?
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("MAC key must be 32 bytes"))?;
-
-        let storage = Backend::init_from_config(&config, mac_key)
-            .await
-            .context("Failed to initialize storage backend")?;
-
-        let transparency_log = storage
-            .get_head()
-            .await
-            .context("Error trying to get log head")?
-            .unwrap_or_else(|| {
-                tracing::info!("No log head found, creating new log");
-                TransparencyLog::new()
-            });
-
         // Read auditor settings
         let signal_public_key = std::fs::read_to_string(&config.signal_public_key)
             .context("Failed to read signal public key")?;
@@ -126,7 +112,25 @@ impl KeyTransparencyClient {
         let auditor_key = SigningKey::from_pkcs8_pem(&auditor_signing_key)
             .context("Failed to parse auditor signing key")?;
 
-        let auditor = Auditor::new(auditor_config, auditor_key);
+        let auditor = Auditor::new(auditor_config, auditor_key.clone());
+
+        // TODO - derive mac key and signing key from a single seed
+        let hkdf = Hkdf::<Sha256>::new(None, &auditor_key.to_bytes());
+        let mut mac_key = [0u8; 32];
+        hkdf.expand(b"auditor-mac-key", &mut mac_key).map_err(|_| anyhow::anyhow!("Failed to expand HKDF"))?;
+
+        let storage = Backend::init_from_config(&config, mac_key)
+            .await
+            .context("Failed to initialize storage backend")?;
+
+        let transparency_log = storage
+            .get_head()
+            .await
+            .context("Error trying to get log head")?
+            .unwrap_or_else(|| {
+                tracing::info!("No log head found, creating new log");
+                TransparencyLog::new()
+            });
 
         let endpoint = Endpoint::from_shared(config.server_endpoint.clone())
             .context("Failed to create endpoint")?
@@ -309,8 +313,7 @@ impl KeyTransparencyClient {
                 last_reported = std::time::Instant::now();
                 let rate = diff as f64 / elapsed.as_secs_f64();
                 let percent = (progress as f64 / initial_log_end as f64 * 100.0).round();
-                let remaining =
-                    self.hms((initial_log_end.saturating_sub(progress)) / rate as u64);
+                let remaining = self.hms((initial_log_end.saturating_sub(progress)) / rate as u64);
                 tracing::info!(
                     type = "syncing",
                     rate = rate,
@@ -356,11 +359,19 @@ impl KeyTransparencyClient {
     }
 }
 
-/// Load configuration from a YAML file
-pub fn load_config_from_file(path: &PathBuf) -> Result<ClientConfig, anyhow::Error> {
-    let config_content = std::fs::read_to_string(path)?;
-    let config: ClientConfig = serde_yaml::from_str(&config_content)?;
-    Ok(config)
+/// Load configuration from a YAML file with environment variable support
+pub fn load_config_from_file(path: &Path) -> Result<ClientConfig, anyhow::Error> {
+    let config = Config::builder()
+        .add_source(File::from(path.to_path_buf()).required(true))
+        .add_source(Environment::with_prefix("AUDIT"))
+        .build()
+        .context("Failed to build configuration")?;
+
+    let client_config: ClientConfig = config
+        .try_deserialize()
+        .context("Failed to deserialize configuration")?;
+
+    Ok(client_config)
 }
 
 /// Fetch audit entries starting from the given position
@@ -383,7 +394,7 @@ async fn fetch_audit_entries(
         let mut request = Request::new(AuditRequest { start, limit });
         request.set_timeout(Duration::from_secs(config.request_timeout_seconds));
         let result = client.audit(request).await;
-    
+
         match result {
             Ok(response) => {
                 return Ok(response.into_inner());

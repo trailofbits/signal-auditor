@@ -17,6 +17,7 @@ prost = "0.13"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "fs"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
+config = "0.15.3"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0.98"
 serde_cbor = "0.11.2"
@@ -30,6 +31,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["json", "env-filter"] }
 tracing-stackdriver = { version = "0.10.0", optional = true }
 hmac = "0.12.1"
+hkdf = "0.12.4"
 
 
 [build-dependencies]

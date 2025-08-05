@@ -1,16 +1,15 @@
 //! A trait for storage backends.
-//! 
+//!
 //! Currently we do not actually use generic storage impls
 //! but instead use feature flags to select a single storage backend
-//! 
+//!
 //! TODO - sign stored data to ensure integrity
 
 use crate::client::ClientConfig;
-use signal_auditor::transparency::TransparencyLog;
-use serde::{Deserialize, Serialize};
 use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-
+use signal_auditor::transparency::TransparencyLog;
 
 type MacKey = [u8; 32];
 
@@ -32,11 +31,13 @@ struct StoredHead {
     mac: Vec<u8>,
 }
 
-
 #[allow(async_fn_in_trait)]
 pub trait Storage: Sized {
     /// Initialize the storage from a config
-    async fn init_from_config(config: &ClientConfig, mac_key: MacKey) -> Result<Self, anyhow::Error>;
+    async fn init_from_config(
+        config: &ClientConfig,
+        mac_key: MacKey,
+    ) -> Result<Self, anyhow::Error>;
 
     /// Commit a log head to storage
     async fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error>;
@@ -45,7 +46,6 @@ pub trait Storage: Sized {
     /// Returns None if the storage is not initialized
     async fn get_head(&self) -> Result<Option<TransparencyLog>, anyhow::Error>;
 }
-
 
 /// Serialize a log head to a byte vector, and include a MAC
 fn serialize_head(mac_key: &MacKey, head: &TransparencyLog) -> Result<Vec<u8>, anyhow::Error> {
