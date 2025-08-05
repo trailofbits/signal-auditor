@@ -6,9 +6,9 @@ use ed25519_dalek::{
     SigningKey, VerifyingKey,
     pkcs8::{DecodePrivateKey, DecodePublicKey},
 };
-use sha2::Sha256;
 use hkdf::Hkdf;
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::time::Duration;
 use std::{
     collections::VecDeque,
@@ -117,7 +117,8 @@ impl KeyTransparencyClient {
         // TODO - derive mac key and signing key from a single seed
         let hkdf = Hkdf::<Sha256>::new(None, &auditor_key.to_bytes());
         let mut mac_key = [0u8; 32];
-        hkdf.expand(b"auditor-mac-key", &mut mac_key).map_err(|_| anyhow::anyhow!("Failed to expand HKDF"))?;
+        hkdf.expand(b"auditor-mac-key", &mut mac_key)
+            .map_err(|_| anyhow::anyhow!("Failed to expand HKDF"))?;
 
         let storage = Backend::init_from_config(&config, mac_key)
             .await

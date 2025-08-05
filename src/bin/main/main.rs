@@ -1,5 +1,9 @@
 use anyhow::Context;
-use std::{path::PathBuf, time::Duration};
+use clap::Parser;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -7,6 +11,14 @@ mod client;
 use client::{KeyTransparencyClient, load_config_from_file};
 
 mod storage;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to the configuration file
+    #[arg(short, long, default_value = "config.yaml")]
+    config: PathBuf,
+}
 
 #[cfg(feature = "stackdriver")]
 const GCP_ERROR_TYPE: &str =
@@ -25,12 +37,14 @@ macro_rules! gcp_error {
 // TODO - distinguish between measured and unmeasured config items
 #[tokio::main]
 async fn main() {
-    if let Err(e) = run().await {
+    let args = Args::parse();
+
+    if let Err(e) = run(&args.config).await {
         gcp_error!(format!("Error running audit: {e:?}"));
     }
 }
 
-async fn run() -> Result<(), anyhow::Error> {
+async fn run(config_path: &Path) -> Result<(), anyhow::Error> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let builder = tracing_subscriber::registry().with(env_filter);
@@ -42,8 +56,7 @@ async fn run() -> Result<(), anyhow::Error> {
     builder.with(tracing_subscriber::fmt::layer()).init();
 
     // Load configuration from YAML file
-    let config_path = PathBuf::from("config.yaml");
-    let config = load_config_from_file(&config_path).context("Failed to load config")?;
+    let config = load_config_from_file(config_path).context("Failed to load config")?;
 
     let mut client = KeyTransparencyClient::new(config).await?;
     let mut backoff = Duration::from_secs(10);
