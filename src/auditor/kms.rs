@@ -10,7 +10,6 @@ use gcloud_kms::{
     client::{Client, ClientConfig},
     grpc::kms::v1::{
         AsymmetricSignRequest, GetPublicKeyRequest, crypto_key_version::CryptoKeyVersionAlgorithm,
-        public_key::PublicKeyFormat,
     },
 };
 
@@ -30,7 +29,7 @@ impl Auditor {
             .get_public_key(
                 GetPublicKeyRequest {
                     name: kms_name.to_string(),
-                    public_key_format: PublicKeyFormat::Pem.into(),
+                    public_key_format: 0, // PEM
                 },
                 None,
             )
