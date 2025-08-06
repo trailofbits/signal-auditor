@@ -2,13 +2,8 @@
 
 use anyhow::Context;
 use config::{Config, Environment, File};
-use ed25519_dalek::{
-    SigningKey, VerifyingKey,
-    pkcs8::{DecodePrivateKey, DecodePublicKey},
-};
-use hkdf::Hkdf;
+use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::time::Duration;
 use std::{
     collections::VecDeque,
@@ -25,6 +20,9 @@ use signal_auditor::transparency::TransparencyLog;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 use crate::storage::{Backend, Storage};
+
+#[cfg(not(feature = "gcloud-kms"))]
+use ed25519_dalek::{SigningKey, pkcs8::DecodePrivateKey};
 
 /// Configuration for the Key Transparency client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,8 +45,6 @@ pub struct ClientConfig {
     pub signal_public_key: PathBuf,
     /// VRF Public Key
     pub vrf_public_key: PathBuf,
-    /// Auditor signing key
-    pub auditor_signing_key: PathBuf,
     /// Poll interval for audit seconds
     pub poll_interval_seconds: u64,
     /// Maximum number of concurrent requests to queue
@@ -63,6 +59,14 @@ pub struct ClientConfig {
     /// Path to the storage file
     #[cfg(not(feature = "storage-gcp"))]
     pub storage_path: Option<PathBuf>,
+
+    /// KMS key version name
+    #[cfg(feature = "gcloud-kms")]
+    pub kms_key_version: String,
+
+    #[cfg(not(feature = "gcloud-kms"))]
+    /// Auditor signing key
+    pub auditor_signing_key: PathBuf,
 }
 
 /// A stateful Auditor client for the Key Transparency service
@@ -93,34 +97,11 @@ impl KeyTransparencyClient {
             tls_config = tls_config.with_enabled_roots();
         }
 
-        // Read auditor settings
-        let signal_public_key = std::fs::read_to_string(&config.signal_public_key)
-            .context("Failed to read signal public key")?;
-        let vrf_public_key = std::fs::read_to_string(&config.vrf_public_key)
-            .context("Failed to read VRF public key")?;
-        let auditor_signing_key = std::fs::read_to_string(&config.auditor_signing_key)
-            .context("Failed to read auditor signing key")?;
+        let auditor = create_auditor(&config)
+            .await
+            .context("Failed to initialize auditor")?;
 
-        let auditor_config = PublicConfig {
-            mode: DeploymentMode::ThirdPartyAuditing, // Assume third party auditing, since we're an auditor...
-            sig_key: VerifyingKey::from_public_key_pem(&signal_public_key)
-                .context("Failed to parse signal public key")?,
-            vrf_key: VerifyingKey::from_public_key_pem(&vrf_public_key)
-                .context("Failed to parse VRF public key")?,
-        };
-
-        let auditor_key = SigningKey::from_pkcs8_pem(&auditor_signing_key)
-            .context("Failed to parse auditor signing key")?;
-
-        let auditor = Auditor::new(auditor_config, auditor_key.clone());
-
-        // TODO - derive mac key and signing key from a single seed
-        let hkdf = Hkdf::<Sha256>::new(None, &auditor_key.to_bytes());
-        let mut mac_key = [0u8; 32];
-        hkdf.expand(b"auditor-mac-key", &mut mac_key)
-            .map_err(|_| anyhow::anyhow!("Failed to expand HKDF"))?;
-
-        let storage = Backend::init_from_config(&config, mac_key)
+        let storage = Backend::init_from_config(&config)
             .await
             .context("Failed to initialize storage backend")?;
 
@@ -217,12 +198,16 @@ impl KeyTransparencyClient {
         &mut self,
         client: &mut KeyTransparencyServiceClient<Channel>,
     ) -> Result<Response<()>, anyhow::Error> {
-        let tree_head = self.auditor.sign_head(
-            self.transparency_log
-                .log_root()
-                .context("Tried to submit empty log root")?,
-            self.transparency_log.size(),
-        );
+        let tree_head = self
+            .auditor
+            .sign_head(
+                self.transparency_log
+                    .log_root()
+                    .context("Tried to submit empty log root")?,
+                self.transparency_log.size(),
+            )
+            .await
+            .context("Failed to sign auditor head")?;
 
         let mut request = Request::new(tree_head.clone());
         request.set_timeout(Duration::from_secs(self.config.request_timeout_seconds));
@@ -432,4 +417,51 @@ async fn fetch_audit_entries(
             }
         }
     }
+}
+
+#[cfg(not(feature = "gcloud-kms"))]
+async fn create_auditor(client_config: &ClientConfig) -> Result<Auditor, anyhow::Error> {
+    let signal_public_key = std::fs::read_to_string(&client_config.signal_public_key)
+        .context("Failed to read signal public key")?;
+    let vrf_public_key = std::fs::read_to_string(&client_config.vrf_public_key)
+        .context("Failed to read VRF public key")?;
+    let auditor_signing_key = std::fs::read_to_string(&client_config.auditor_signing_key)
+        .context("Failed to read auditor signing key")?;
+
+    let key = SigningKey::from_pkcs8_pem(&auditor_signing_key)
+        .context("Failed to parse auditor signing key")?;
+
+    let config = PublicConfig {
+        mode: DeploymentMode::ThirdPartyAuditing, // Assume third party auditing, since we're an auditor...
+        sig_key: VerifyingKey::from_public_key_pem(&signal_public_key)
+            .context("Failed to parse signal public key")?,
+        vrf_key: VerifyingKey::from_public_key_pem(&vrf_public_key)
+            .context("Failed to parse VRF public key")?,
+        auditor_key: key.verifying_key(),
+    };
+
+    Ok(Auditor { config, key })
+}
+
+#[cfg(feature = "gcloud-kms")]
+async fn create_auditor(client_config: &ClientConfig) -> Result<Auditor, anyhow::Error> {
+    let signal_public_key = std::fs::read_to_string(&client_config.signal_public_key)
+        .context("Failed to read signal public key")?;
+    let vrf_public_key = std::fs::read_to_string(&client_config.vrf_public_key)
+        .context("Failed to read VRF public key")?;
+
+    let key_name = client_config.kms_key_version.clone();
+    let auditor_public_key = Auditor::get_public_key(&key_name).await?;
+
+    let config = PublicConfig {
+        mode: DeploymentMode::ThirdPartyAuditing, // Assume third party auditing, since we're an auditor...
+        sig_key: VerifyingKey::from_public_key_pem(&signal_public_key)
+            .context("Failed to parse signal public key")?,
+        vrf_key: VerifyingKey::from_public_key_pem(&vrf_public_key)
+            .context("Failed to parse VRF public key")?,
+        auditor_key: VerifyingKey::from_public_key_pem(&auditor_public_key)
+            .context("Failed to parse auditor public key")?,
+    };
+
+    Ok(Auditor { config, key_name })
 }

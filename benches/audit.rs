@@ -50,6 +50,7 @@ fn benchmark_sequential_log_updates(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(feature = "gcloud-kms"))]
 fn benchmark_head_signing(c: &mut Criterion) {
     let test_vectors = load_test_vectors();
     let should_succeed = test_vectors
@@ -66,9 +67,13 @@ fn benchmark_head_signing(c: &mut Criterion) {
         mode: DeploymentMode::ThirdPartyAuditing,
         sig_key: verifying_key,
         vrf_key: verifying_key, // Using same key for simplicity in benchmark
+        auditor_key: verifying_key,
     };
 
-    let auditor = Auditor::new(config, signing_key);
+    let auditor = Auditor {
+        config,
+        key: signing_key,
+    };
 
     // Apply all updates to get a final log state
     let mut log = TransparencyLog::new();
@@ -86,7 +91,7 @@ fn benchmark_head_signing(c: &mut Criterion) {
 
     group.bench_function("sign_head", |b| {
         b.iter(|| {
-            let signature = auditor.sign_head(black_box(final_root), black_box(final_size));
+            let signature = auditor.sign_at_time(final_root, final_size, 0);
             black_box(signature);
         });
     });
@@ -94,6 +99,7 @@ fn benchmark_head_signing(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(feature = "gcloud-kms"))]
 criterion_group!(
     name = benches;
     config = Criterion::default()
@@ -102,4 +108,15 @@ criterion_group!(
         .warm_up_time(std::time::Duration::from_secs(3));
     targets = benchmark_sequential_log_updates, benchmark_head_signing
 );
+
+#[cfg(feature = "gcloud-kms")]
+criterion_group!(
+    name = benches;
+    config = Criterion::default()
+        .sample_size(100)
+        .measurement_time(std::time::Duration::from_secs(10))
+        .warm_up_time(std::time::Duration::from_secs(3));
+    targets = benchmark_sequential_log_updates
+);
+
 criterion_main!(benches);

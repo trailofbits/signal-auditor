@@ -6,12 +6,10 @@
 //! TODO - sign stored data to ensure integrity
 
 use crate::client::ClientConfig;
-use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use signal_auditor::transparency::TransparencyLog;
 
-type MacKey = [u8; 32];
+const VERSION: u8 = 1;
 
 #[cfg(feature = "storage-gcp")]
 mod gcp;
@@ -25,19 +23,15 @@ pub use filestore::FileBackend as Backend;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredHead {
+    version: u8,
     #[serde(with = "serde_bytes")]
     log_cache: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    mac: Vec<u8>,
 }
 
 #[allow(async_fn_in_trait)]
 pub trait Storage: Sized {
     /// Initialize the storage from a config
-    async fn init_from_config(
-        config: &ClientConfig,
-        mac_key: MacKey,
-    ) -> Result<Self, anyhow::Error>;
+    async fn init_from_config(config: &ClientConfig) -> Result<Self, anyhow::Error>;
 
     /// Commit a log head to storage
     async fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error>;
@@ -48,23 +42,21 @@ pub trait Storage: Sized {
 }
 
 /// Serialize a log head to a byte vector, and include a MAC
-fn serialize_head(mac_key: &MacKey, head: &TransparencyLog) -> Result<Vec<u8>, anyhow::Error> {
+fn serialize_head(head: &TransparencyLog) -> Result<Vec<u8>, anyhow::Error> {
     let serialized = serde_cbor::ser::to_vec_packed(head)?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(mac_key).unwrap();
-    mac.update(&serialized);
     let stored_head = StoredHead {
         log_cache: serialized,
-        mac: mac.finalize().into_bytes().to_vec(),
+        version: VERSION,
     };
     Ok(serde_cbor::ser::to_vec_packed(&stored_head)?)
 }
 
 /// Deserialize a log head from a byte vector, and verify the MAC
-fn deserialize_head(mac_key: &MacKey, head: &[u8]) -> Result<TransparencyLog, anyhow::Error> {
+fn deserialize_head(head: &[u8]) -> Result<TransparencyLog, anyhow::Error> {
     let stored_head: StoredHead = serde_cbor::from_slice(head)?;
-    let mut mac = Hmac::<Sha256>::new_from_slice(mac_key).unwrap();
-    mac.update(&stored_head.log_cache);
-    mac.verify_slice(&stored_head.mac)?;
+    if stored_head.version != VERSION {
+        return Err(anyhow::anyhow!("Invalid version"));
+    }
     let log: TransparencyLog = serde_cbor::from_slice(&stored_head.log_cache)?;
     Ok(log)
 }
