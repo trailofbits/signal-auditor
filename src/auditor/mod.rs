@@ -1,15 +1,17 @@
-//! The Auditor module implements the signing functionality
-//! for a third party auditor.
-//!
-//! Log tracking is not included in this module
+#[cfg(feature = "kms-gcp")]
+mod kms;
 
-use crate::proto::transparency::AuditorTreeHead;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey as Ed25519SigningKey;
-use ed25519_dalek::VerifyingKey as Ed25519PublicKey;
+#[cfg(not(feature = "kms-gcp"))]
+mod local;
+
+#[cfg(feature = "kms-gcp")]
+pub use kms::*;
+
+#[cfg(not(feature = "kms-gcp"))]
+pub use local::*;
 
 use crate::Hash;
-use std::time::{SystemTime, UNIX_EPOCH};
+use ed25519_dalek::VerifyingKey;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DeploymentMode {
@@ -45,44 +47,35 @@ impl TryFrom<u8> for DeploymentMode {
 pub struct PublicConfig {
     pub mode: DeploymentMode,
     /// The Ed25519 signing public key owned by the log operator.
-    pub sig_key: Ed25519PublicKey,
+    pub sig_key: VerifyingKey,
     /// The Ed25519 ECVRF public key owned by the log operator.
-    pub vrf_key: Ed25519PublicKey, // Signal uses Ed25519 ECVRF
+    pub vrf_key: VerifyingKey,
+    /// The Ed25519 signing public key owned by the auditor.
+    pub auditor_key: VerifyingKey,
 }
 
-/// `Auditor` holds a signing key and a public configuration.
-pub struct Auditor {
-    pub config: PublicConfig,
-    pub key: Ed25519SigningKey,
-}
-
-impl Auditor {
-    pub fn new(config: PublicConfig, key: Ed25519SigningKey) -> Self {
-        Self { config, key }
-    }
-
-    /// Sign a log head at a given time.
-    pub fn sign_at_time(&self, head: Hash, size: u64, time: i64) -> AuditorTreeHead {
-        let config = &self.config;
+impl PublicConfig {
+    /// Encode a log head for signing at a given time.
+    fn encode_at_time(&self, head: Hash, size: u64, time: i64) -> Vec<u8> {
         let mut msg = Vec::new();
         msg.extend_from_slice(&[0, 0]); //Ciphersuite
-        msg.extend_from_slice(&[config.mode.into()]); // Audit mode
+        msg.extend_from_slice(&[self.mode.into()]); // Audit mode
 
-        let vk_len: u16 = config.sig_key.as_bytes().len() as u16;
+        let vk_len: u16 = self.sig_key.as_bytes().len() as u16;
 
         msg.extend_from_slice(&vk_len.to_be_bytes());
-        msg.extend_from_slice(config.sig_key.as_bytes());
+        msg.extend_from_slice(self.sig_key.as_bytes());
 
-        let vrf_len: u16 = config.vrf_key.as_bytes().len() as u16;
+        let vrf_len: u16 = self.vrf_key.as_bytes().len() as u16;
 
         msg.extend_from_slice(&vrf_len.to_be_bytes());
-        msg.extend_from_slice(config.vrf_key.as_bytes());
+        msg.extend_from_slice(self.vrf_key.as_bytes());
 
-        if config.mode == DeploymentMode::ThirdPartyAuditing {
-            let key_len: u16 = self.key.verifying_key().as_bytes().len() as u16;
+        if self.mode == DeploymentMode::ThirdPartyAuditing {
+            let key_len: u16 = self.auditor_key.as_bytes().len() as u16;
 
             msg.extend_from_slice(&key_len.to_be_bytes());
-            msg.extend_from_slice(self.key.verifying_key().as_bytes());
+            msg.extend_from_slice(self.auditor_key.as_bytes());
         }
 
         msg.extend_from_slice(&size.to_be_bytes());
@@ -91,21 +84,6 @@ impl Auditor {
 
         msg.extend_from_slice(head.as_slice());
 
-        let sig = self.key.sign(&msg);
-
-        AuditorTreeHead {
-            tree_size: size,
-            signature: sig.to_vec(),
-            timestamp: time,
-        }
-    }
-
-    /// Sign a log head at the current time.
-    pub fn sign_head(&self, head: Hash, size: u64) -> AuditorTreeHead {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        self.sign_at_time(head, size, ts as i64)
+        msg
     }
 }

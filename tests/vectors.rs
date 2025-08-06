@@ -55,18 +55,20 @@ fn test_should_fail() {
     }
 }
 
+#[cfg(not(feature = "gcloud-kms"))]
 #[test]
 fn test_signatures() {
     let vector = VECTORS.signature.clone().unwrap();
+    let key = SigningKey::from_pkcs8_der(vector.auditor_priv_key.as_slice()).unwrap();
+
     let config = PublicConfig {
         mode: (vector.deployment_mode as u8).try_into().unwrap(),
         sig_key: VerifyingKey::from_public_key_der(vector.sig_pub_key.as_slice()).unwrap(),
         vrf_key: VerifyingKey::from_public_key_der(vector.vrf_pub_key.as_slice()).unwrap(),
+        auditor_key: key.verifying_key(),
     };
 
-    let key = SigningKey::from_pkcs8_der(vector.auditor_priv_key.as_slice()).unwrap();
-
-    let auditor = Auditor::new(config, key);
+    let auditor = Auditor { config, key };
 
     let head = vector.root.try_into().unwrap();
     let sig = auditor.sign_at_time(head, vector.tree_size, vector.timestamp);
