@@ -58,7 +58,7 @@ impl Storage for GcpBackend {
         let serialized = serialize_head(head)?;
 
         let upload_type = UploadType::Simple(Media::new(HEAD_OBJECT.to_string()));
-        self.client
+        let response = self.client
             .upload_object(
                 &UploadObjectRequest {
                     bucket: self.bucket.clone(),
@@ -69,7 +69,7 @@ impl Storage for GcpBackend {
                 &upload_type,
             )
             .await?;
-        *self.last_generation.get_or_insert(-1) += 1;
+        self.last_generation = Some(response.generation);
         Ok(())
     }
 
