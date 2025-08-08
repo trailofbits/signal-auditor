@@ -1,11 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use ed25519_dalek::SigningKey;
-use rand::{TryRngCore, rngs::OsRng};
 use signal_auditor::proto::transparency;
-use signal_auditor::{
-    auditor::{Auditor, DeploymentMode, PublicConfig},
-    transparency::TransparencyLog,
-};
+use signal_auditor::transparency::TransparencyLog;
 use std::fs;
 use std::hint::black_box;
 

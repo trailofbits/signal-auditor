@@ -1,9 +1,4 @@
-use ed25519_dalek::pkcs8::DecodePrivateKey;
 use lazy_static::lazy_static;
-
-use signal_auditor::auditor::{Auditor, PublicConfig};
-
-use ed25519_dalek::{SigningKey, VerifyingKey, pkcs8::DecodePublicKey};
 
 use signal_auditor::proto::transparency;
 

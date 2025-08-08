@@ -10,13 +10,11 @@
 use crate::client::ClientConfig;
 use crate::storage::{Storage, deserialize_head, serialize_head};
 use google_cloud_storage::client::{Client, ClientConfig as GcpClientConfig};
+use google_cloud_storage::http::Error;
 use google_cloud_storage::http::error::ErrorResponse;
 use google_cloud_storage::http::objects::download::Range;
 use google_cloud_storage::http::objects::get::GetObjectRequest;
-use google_cloud_storage::http::objects::list::ListObjectsRequest;
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
-use hex::ToHex;
-use google_cloud_storage::http::Error;
 use signal_auditor::transparency::TransparencyLog;
 
 const HEAD_OBJECT: &str = "log_head";
@@ -76,17 +74,18 @@ impl Storage for GcpBackend {
 
     // Gets head from most recent object by lexicographic order
     async fn get_head(&mut self) -> Result<Option<TransparencyLog>, anyhow::Error> {
-        let head_file = self.client.get_object(
-            &GetObjectRequest {
+        let head_file = self
+            .client
+            .get_object(&GetObjectRequest {
                 bucket: self.bucket.clone(),
                 object: HEAD_OBJECT.to_string(),
                 ..Default::default()
-            },
-        ).await;
+            })
+            .await;
 
-        if let Err(Error::Response(ErrorResponse{code: 404, ..})) = head_file {
-                tracing::info!("No log head found, creating new log");
-                return Ok(None);
+        if let Err(Error::Response(ErrorResponse { code: 404, .. })) = head_file {
+            tracing::info!("No log head found, creating new log");
+            return Ok(None);
         }
 
         let head_file = head_file?;
