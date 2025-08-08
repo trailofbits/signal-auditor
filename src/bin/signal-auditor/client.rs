@@ -128,30 +128,6 @@ impl KeyTransparencyClient {
         })
     }
 
-    /// Returns true if there are updates at the given index
-    /// i.e. the log has size at least `index`
-    async fn test_at_index(
-        &self,
-        client: &mut KeyTransparencyAuditorServiceClient<Channel>,
-        index: u64,
-    ) -> Result<bool, anyhow::Error> {
-        let response =
-            fetch_audit_entries(&self.config, &mut client.clone(), index, Some(1), false).await;
-        match response {
-            Ok(response) => Ok(!response.updates.is_empty()),
-            Err(status) => {
-                if status.code() == Code::OutOfRange {
-                    Ok(false)
-                } else {
-                    Err(anyhow::anyhow!(
-                        "Failed to fetch audit entries at index {index}: {:?}",
-                        status
-                    ))
-                }
-            }
-        }
-    }
-
     // Fetch the log size from the server
     pub async fn fetch_log_size(&mut self) -> Result<u64, anyhow::Error> {
         let mut client = KeyTransparencyAuditorServiceClient::new(self.endpoint.connect().await?);
@@ -353,18 +329,6 @@ async fn fetch_audit_entries(
                 return Ok(response.into_inner());
             }
             Err(status) => {
-                // Patch up the error code to be more useful
-                // TODO: request fix for this upstream
-                let status = if status.code() == Code::InvalidArgument
-                    && status
-                        .message()
-                        .contains("auditing can not start past end of tree")
-                {
-                    Status::new(Code::OutOfRange, status.message())
-                } else {
-                    status
-                };
-
                 if retries > 0 {
                     if status.code() != Code::OutOfRange {
                         tracing::warn!(
