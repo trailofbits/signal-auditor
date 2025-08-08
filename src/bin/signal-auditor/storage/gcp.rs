@@ -69,7 +69,7 @@ impl Storage for GcpBackend {
                 &upload_type,
             )
             .await?;
-        *self.last_generation.get_or_insert(0) += 1;
+        *self.last_generation.get_or_insert(-1) += 1;
         Ok(())
     }
 
