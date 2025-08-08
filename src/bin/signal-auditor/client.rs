@@ -100,7 +100,7 @@ impl KeyTransparencyClient {
             .await
             .context("Failed to initialize auditor")?;
 
-        let storage = Backend::init_from_config(&config)
+        let mut storage = Backend::init_from_config(&config)
             .await
             .context("Failed to initialize storage backend")?;
 

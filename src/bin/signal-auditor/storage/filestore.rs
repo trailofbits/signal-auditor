@@ -36,7 +36,7 @@ impl Storage for FileBackend {
         )
     }
 
-    async fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error> {
+    async fn commit_head(&mut self, head: &TransparencyLog) -> Result<(), anyhow::Error> {
         let serialized = serialize_head(head)?;
 
         let mut file = File::create(&self.path)?;
@@ -46,7 +46,7 @@ impl Storage for FileBackend {
         Ok(())
     }
 
-    async fn get_head(&self) -> Result<Option<TransparencyLog>, anyhow::Error> {
+    async fn get_head(&mut self) -> Result<Option<TransparencyLog>, anyhow::Error> {
         if !self.path.exists() {
             return Ok(None);
         }
