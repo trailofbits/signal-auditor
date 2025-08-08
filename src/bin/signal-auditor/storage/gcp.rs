@@ -120,8 +120,7 @@ impl Storage for GcpBackend {
             .await?;
         let head = deserialize_head(&head_file_data)?;
 
-        // For now, verify consistency with the object name
-        // TODO - verify a signature over the data
+        // Verify consistency with the object name
         if get_head_path(&head)? != head_object.name {
             return Err(anyhow::anyhow!(
                 "Head file path mismatch: wanted {:?}, got {:?}",
