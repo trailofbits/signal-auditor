@@ -10,27 +10,21 @@
 use crate::client::ClientConfig;
 use crate::storage::{Storage, deserialize_head, serialize_head};
 use google_cloud_storage::client::{Client, ClientConfig as GcpClientConfig};
+use google_cloud_storage::http::Error;
+use google_cloud_storage::http::error::ErrorResponse;
 use google_cloud_storage::http::objects::download::Range;
 use google_cloud_storage::http::objects::get::GetObjectRequest;
-use google_cloud_storage::http::objects::list::ListObjectsRequest;
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
-use hex::ToHex;
 use signal_auditor::transparency::TransparencyLog;
+
+const HEAD_OBJECT: &str = "log_head";
 
 /// A storage backend using a GCP bucket
 pub struct GcpBackend {
     bucket: String,
     client: Client,
-}
-
-/// Format head path as `head_{size}_{log_root_hash}`
-/// where `size` is a 16-character hex string and `log_root_hash` is a 64-character hex string
-fn get_head_path(head: &TransparencyLog) -> Result<String, anyhow::Error> {
-    Ok(format!(
-        "head_{:016x}_{}",
-        head.size(),
-        head.log_root()?.encode_hex::<String>()
-    ))
+    // Used to detect contention on the head object
+    last_generation: Option<i64>,
 }
 
 impl GcpBackend {
@@ -41,6 +35,7 @@ impl GcpBackend {
         Ok(Self {
             bucket: bucket.to_string(),
             client,
+            last_generation: None,
         })
     }
 }
@@ -59,75 +54,58 @@ impl Storage for GcpBackend {
 
     // Commits head to a file `head_{size}_{log_root_hash}`
     // then updates `head` to point to the new file
-    async fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error> {
+    async fn commit_head(&mut self, head: &TransparencyLog) -> Result<(), anyhow::Error> {
         let serialized = serialize_head(head)?;
 
-        let path = get_head_path(head)?;
-        let upload_type = UploadType::Simple(Media::new(path.clone()));
-        self.client
+        let upload_type = UploadType::Simple(Media::new(HEAD_OBJECT.to_string()));
+        let response = self
+            .client
             .upload_object(
                 &UploadObjectRequest {
                     bucket: self.bucket.clone(),
-                    if_generation_match: Some(0), // never overwrite
+                    if_generation_match: self.last_generation,
                     ..Default::default()
                 },
                 serialized,
                 &upload_type,
             )
             .await?;
+        self.last_generation = Some(response.generation);
         Ok(())
     }
 
     // Gets head from most recent object by lexicographic order
-    async fn get_head(&self) -> Result<Option<TransparencyLog>, anyhow::Error> {
-        let mut objects = self
+    async fn get_head(&mut self) -> Result<Option<TransparencyLog>, anyhow::Error> {
+        let head_file = self
             .client
-            .list_objects(&ListObjectsRequest {
+            .get_object(&GetObjectRequest {
                 bucket: self.bucket.clone(),
+                object: HEAD_OBJECT.to_string(),
                 ..Default::default()
             })
-            .await?;
+            .await;
 
-        while objects.next_page_token.is_some() {
-            objects = self
-                .client
-                .list_objects(&ListObjectsRequest {
-                    bucket: self.bucket.clone(),
-                    page_token: objects.next_page_token,
-                    ..Default::default()
-                })
-                .await?;
+        if let Err(Error::Response(ErrorResponse { code: 404, .. })) = head_file {
+            tracing::info!("No log head found, creating new log");
+            return Ok(None);
         }
 
-        let objects = objects
-            .items
-            .ok_or(anyhow::anyhow!("Head listing returned none"))?;
-        let head_object = objects
-            .last()
-            .ok_or(anyhow::anyhow!("Head listing empty"))?;
-        let head_file_path = head_object.name.clone();
+        let head_file = head_file?;
+        self.last_generation = Some(head_file.generation);
 
         let head_file_data = self
             .client
             .download_object(
                 &GetObjectRequest {
                     bucket: self.bucket.clone(),
-                    object: head_file_path.clone(),
+                    object: HEAD_OBJECT.to_string(),
+                    generation: self.last_generation,
                     ..Default::default()
                 },
                 &Range::default(),
             )
             .await?;
         let head = deserialize_head(&head_file_data)?;
-
-        // Verify consistency with the object name
-        if get_head_path(&head)? != head_object.name {
-            return Err(anyhow::anyhow!(
-                "Head file path mismatch: wanted {:?}, got {:?}",
-                head_file_path,
-                get_head_path(&head)?
-            ));
-        }
 
         Ok(Some(head))
     }

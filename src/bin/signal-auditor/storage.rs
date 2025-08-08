@@ -34,11 +34,11 @@ pub trait Storage: Sized {
     async fn init_from_config(config: &ClientConfig) -> Result<Self, anyhow::Error>;
 
     /// Commit a log head to storage
-    async fn commit_head(&self, head: &TransparencyLog) -> Result<(), anyhow::Error>;
+    async fn commit_head(&mut self, head: &TransparencyLog) -> Result<(), anyhow::Error>;
 
     /// Get the log head from storage, if it exists
     /// Returns None if the storage is not initialized
-    async fn get_head(&self) -> Result<Option<TransparencyLog>, anyhow::Error>;
+    async fn get_head(&mut self) -> Result<Option<TransparencyLog>, anyhow::Error>;
 }
 
 /// Serialize a log head to a byte vector, and include a MAC
