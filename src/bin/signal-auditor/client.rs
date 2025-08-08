@@ -13,9 +13,8 @@ use tonic::{Code, Request, Response, Status};
 
 use signal_auditor::auditor::DeploymentMode;
 use signal_auditor::auditor::{Auditor, PublicConfig};
-use signal_auditor::proto::kt::{
-    AuditRequest, AuditResponse, key_transparency_service_client::KeyTransparencyServiceClient,
-};
+use signal_auditor::proto::kt::key_transparency_auditor_service_client::KeyTransparencyAuditorServiceClient;
+use signal_auditor::proto::kt::{AuditRequest, AuditResponse};
 use signal_auditor::transparency::TransparencyLog;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
@@ -133,7 +132,7 @@ impl KeyTransparencyClient {
     /// i.e. the log has size at least `index`
     async fn test_at_index(
         &self,
-        client: &mut KeyTransparencyServiceClient<Channel>,
+        client: &mut KeyTransparencyAuditorServiceClient<Channel>,
         index: u64,
     ) -> Result<bool, anyhow::Error> {
         let response =
@@ -153,42 +152,11 @@ impl KeyTransparencyClient {
         }
     }
 
-    /// Estimate the end of the log by binary search
-    /// TODO: see if we can get a dedicated endpoint for this
-    pub async fn estimate_log_end(&mut self) -> Result<u64, anyhow::Error> {
-        let transport = self
-            .endpoint
-            .connect()
-            .await
-            .context("Failed to connect to server")?;
-        let mut client = KeyTransparencyServiceClient::new(transport);
-        // Start at known base and keep doubling until we get an empty response
-        let mut low = self.transparency_log.size();
-        let mut high = 1;
-        while self.test_at_index(&mut client, high).await? {
-            high *= 2;
-        }
-
-        // Now binary search between low and high
-        while high - low > 500 {
-            let mid = (low + high) / 2;
-            if self.test_at_index(&mut client, mid).await? {
-                low = mid;
-            } else {
-                high = mid + 1;
-            }
-        }
-
-        // Now poll to find the exact end
-        let response = fetch_audit_entries(&self.config, &mut client, low, Some(1000), false)
-            .await
-            .context(format!("Failed to fetch audit entries at index {low}"))?;
-        if response.updates.is_empty() {
-            // This should never happen, but we'll handle it just in case
-            Err(anyhow::anyhow!("Log end not found at index {low}"))
-        } else {
-            Ok(low + response.updates.len() as u64)
-        }
+    // Fetch the log size from the server
+    pub async fn fetch_log_size(&mut self) -> Result<u64, anyhow::Error> {
+        let mut client = KeyTransparencyAuditorServiceClient::new(self.endpoint.connect().await?);
+        let response = client.tree_size(()).await?;
+        Ok(response.into_inner().tree_size)
     }
 
     /// Submit an auditor tree head signature
@@ -196,7 +164,7 @@ impl KeyTransparencyClient {
     /// or sending to the server. This prevents visible equivocation in case of a crash
     async fn submit_auditor_head(
         &mut self,
-        client: &mut KeyTransparencyServiceClient<Channel>,
+        client: &mut KeyTransparencyAuditorServiceClient<Channel>,
     ) -> Result<Response<()>, anyhow::Error> {
         let tree_head = self
             .auditor
@@ -231,11 +199,8 @@ impl KeyTransparencyClient {
     /// This function does not return unless an error occurs
     pub async fn run_audit(&mut self) -> Result<(), anyhow::Error> {
         // Estimate the end of the log so we can report progress
-        let initial_log_end = self
-            .estimate_log_end()
-            .await
-            .context("Failed to estimate log end")?;
-        tracing::info!("Estimated log end: {initial_log_end}");
+        let initial_log_end = self.fetch_log_size().await?;
+        tracing::info!("Log end: {initial_log_end}");
 
         // Connect to the server
         let transport = self
@@ -243,7 +208,7 @@ impl KeyTransparencyClient {
             .connect()
             .await
             .context("Failed to connect to server")?;
-        let mut client = KeyTransparencyServiceClient::new(transport);
+        let mut client = KeyTransparencyAuditorServiceClient::new(transport);
 
         let batch_size = self.config.default_batch_size;
 
@@ -261,7 +226,7 @@ impl KeyTransparencyClient {
         let config = self.config.clone();
         let fetch_client = client.clone();
         let fetch_job = |start_index| {
-            let mut client: KeyTransparencyServiceClient<Channel> = fetch_client.clone();
+            let mut client: KeyTransparencyAuditorServiceClient<Channel> = fetch_client.clone();
             let config = config.clone();
             async move {
                 fetch_audit_entries(&config, &mut client, start_index, Some(batch_size), true).await
@@ -292,14 +257,15 @@ impl KeyTransparencyClient {
 
             // Report progress if we are syncing
             if syncing && last_reported.elapsed().as_secs() > self.config.sync_progress_interval {
+                let log_end = self.fetch_log_size().await?;
                 let diff = self.transparency_log.size() - progress;
                 progress = self.transparency_log.size();
                 // Report progress, don't use newlines
                 let elapsed = last_reported.elapsed();
                 last_reported = std::time::Instant::now();
                 let rate = diff as f64 / elapsed.as_secs_f64();
-                let percent = (progress as f64 / initial_log_end as f64 * 100.0).round();
-                let remaining = self.hms((initial_log_end.saturating_sub(progress)) / rate as u64);
+                let percent = (progress as f64 / log_end as f64 * 100.0).round();
+                let remaining = self.hms((log_end.saturating_sub(progress)) / rate as u64);
                 tracing::info!(
                     type = "syncing",
                     rate = rate,
@@ -330,8 +296,9 @@ impl KeyTransparencyClient {
                     .await
                     .context("Failed to submit auditor head")?;
 
+                let log_end = self.fetch_log_size().await?;
                 // Log the submission; this serves as the primary health metric
-                tracing::info!(type="submit-head", index=self.transparency_log.size());
+                tracing::info!(type="submit-head", index=self.transparency_log.size(), lag=log_end - self.transparency_log.size());
 
                 // Wait for the entries to start filling up again
                 let poll_interval = Duration::from_secs(self.config.poll_interval_seconds);
@@ -364,7 +331,7 @@ pub fn load_config_from_file(path: &Path) -> Result<ClientConfig, anyhow::Error>
 /// If retry is true, we will retry on failure, and report intermediate errors
 async fn fetch_audit_entries(
     config: &ClientConfig,
-    client: &mut KeyTransparencyServiceClient<Channel>,
+    client: &mut KeyTransparencyAuditorServiceClient<Channel>,
     start: u64,
     limit: Option<u64>,
     // If true, we will retry on failure, and report the error
