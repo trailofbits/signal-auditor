@@ -10,17 +10,11 @@ Signal's key transparency uses a [Mekle^2](https://eprint.iacr.org/2021/453) sty
 For interactive usage, run:
 
 ```
-cargo run main
+cargo run --config config.yaml
 ```
 
-To reduce clutter, you can run:
+For Google Cloud storage, KMS and logging backends, use feature `gcp`
 
 ```
-cargo run main > log.out & watch tail -n 2 log.out
-```
-
-For Google Cloud Logging compatible JSON, use feature `stackdriver`
-
-```
-cargo run main -F stackdriver
+cargo run -F gcp
 ```
