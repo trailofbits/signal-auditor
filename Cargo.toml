@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "An implementation of the Third-Party Auditor role for the Signal Key Transparency Log."
 license = "AGPL-3.0-only"
-repository = "https://github.com/trailofbits/signal-transparency"
+repository = "https://github.com/trailofbits/signal-auditor"
 keywords = ["signal", "key-transparency", "merkle-tree"]
 categories = ["cryptography", "command-line-utilities"]
 
