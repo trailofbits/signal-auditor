@@ -58,7 +58,8 @@ impl Storage for GcpBackend {
         let serialized = serialize_head(head)?;
 
         let upload_type = UploadType::Simple(Media::new(HEAD_OBJECT.to_string()));
-        let response = self.client
+        let response = self
+            .client
             .upload_object(
                 &UploadObjectRequest {
                     bucket: self.bucket.clone(),

@@ -51,21 +51,31 @@ fn test_should_fail() {
 }
 
 #[cfg(not(feature = "gcloud-kms"))]
-#[test]
-fn test_signatures() {
-    let vector = VECTORS.signature.clone().unwrap();
-    let key = SigningKey::from_pkcs8_der(vector.auditor_priv_key.as_slice()).unwrap();
-
-    let config = PublicConfig {
-        mode: (vector.deployment_mode as u8).try_into().unwrap(),
-        sig_key: VerifyingKey::from_public_key_der(vector.sig_pub_key.as_slice()).unwrap(),
-        vrf_key: VerifyingKey::from_public_key_der(vector.vrf_pub_key.as_slice()).unwrap(),
-        auditor_key: key.verifying_key(),
+mod signing {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use ed25519_dalek::{
+        VerifyingKey,
+        pkcs8::{DecodePrivateKey, DecodePublicKey},
     };
+    use signal_auditor::auditor::{Auditor, PublicConfig};
 
-    let auditor = Auditor { config, key };
+    #[test]
+    fn test_signatures() {
+        let vector = VECTORS.signature.clone().unwrap();
+        let key = SigningKey::from_pkcs8_der(vector.auditor_priv_key.as_slice()).unwrap();
 
-    let head = vector.root.try_into().unwrap();
-    let sig = auditor.sign_at_time(head, vector.tree_size, vector.timestamp);
-    assert_eq!(sig.signature, vector.signature);
+        let config = PublicConfig {
+            mode: (vector.deployment_mode as u8).try_into().unwrap(),
+            sig_key: VerifyingKey::from_public_key_der(vector.sig_pub_key.as_slice()).unwrap(),
+            vrf_key: VerifyingKey::from_public_key_der(vector.vrf_pub_key.as_slice()).unwrap(),
+            auditor_key: key.verifying_key(),
+        };
+
+        let auditor = Auditor { config, key };
+
+        let head = vector.root.try_into().unwrap();
+        let sig = auditor.sign_at_time(head, vector.tree_size, vector.timestamp);
+        assert_eq!(sig.signature, vector.signature);
+    }
 }
