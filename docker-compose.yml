@@ -1,0 +1,9 @@
+services:
+  signal-auditor:
+    build: .
+    volumes:
+      - ./config.yaml:/app/config/config.yaml:ro
+      - ./certs:/app/certs:ro
+      - ./data:/app/data
+    environment:
+      - RUST_LOG=info
