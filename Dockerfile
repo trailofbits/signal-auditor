@@ -5,15 +5,12 @@ FROM gcr.io/distroless/cc-debian12@sha256:620d8b11ae800f0dbd7995f89ddc5344ad6032
 # Stage 1: Build environment
 FROM rust AS builder
 
-# Install build dependencies for cross-compilation and performance
+# Install build dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
-
-# Create app user for security
-RUN groupadd --gid 1000 app && useradd --uid 1000 --gid app --shell /bin/bash --create-home app
 
 # Set working directory
 WORKDIR /usr/src/app
