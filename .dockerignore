@@ -1,0 +1,73 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+LICENSE*
+docs/
+
+# Target directory (built artifacts)
+target/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+tmp/
+
+# Local development files
+.env
+.env.local
+.env.*.local
+
+# Docker files (don't include in build context)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Data and runtime files
+data/
+logs/
+*.log
+
+# Certificate files (these should be mounted or provided via secrets)
+certs/
+*.pem
+*.crt
+*.key
+*.p12
+*.pfx
+
+# Test and benchmark artifacts
+coverage/
+.criterion/
+bench_results/
+
+# Backup files
+*.bak
+*.backup
+
+# Editor temp files
+*.kate-swp
+.#*
+
+# Rust specific
+**/*.rs.bk
