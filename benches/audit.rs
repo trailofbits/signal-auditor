@@ -4,11 +4,11 @@ use signal_auditor::transparency::TransparencyLog;
 use std::fs;
 use std::hint::black_box;
 
-mod test_vectors {
+mod vector_fixtures {
     include!(concat!(env!("OUT_DIR"), "/test_vectors.rs"));
 }
 
-fn load_test_vectors() -> test_vectors::TestVectors {
+fn load_test_vectors() -> vector_fixtures::TestVectors {
     let data = fs::read("tests/kt_test_vectors.pb").expect("Failed to read test vectors");
     prost::Message::decode(data.as_slice()).expect("Failed to decode test vectors")
 }

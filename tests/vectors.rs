@@ -2,13 +2,13 @@ use lazy_static::lazy_static;
 
 use signal_auditor::proto::transparency;
 
-mod test_vectors {
+mod vector_fixtures {
     include!(concat!(env!("OUT_DIR"), "/test_vectors.rs"));
 }
 
 use prost::Message;
 use signal_auditor::transparency::TransparencyLog;
-use test_vectors::TestVectors;
+use vector_fixtures::TestVectors;
 
 lazy_static! {
     static ref VECTORS: TestVectors = {
